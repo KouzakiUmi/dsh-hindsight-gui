@@ -50,4 +50,7 @@ All notable changes to this project are documented here. The format follows
 - `hindsight_*` tools are not part of this package — they come from the official
   `@vectorize-io/hindsight-coding-agents`, which ships its own MCP server. Install
   both.
-- There is no CI and no tag-driven release in this repository.
+- The package is published to npm as `dsh-hindsight-gui`. Releases are cut by
+  pushing a `v*` tag, which runs `.github/workflows/publish.yml`. Publication uses
+  npm Trusted Publishing (OIDC), so no long-lived token is stored in the
+  repository.

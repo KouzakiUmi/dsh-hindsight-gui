@@ -1,0 +1,161 @@
+# 版本化发布到 npm：推 v* tag 时发布。
+#
+# 鉴权方式：npm Trusted Publishing（OIDC），不使用长期 token。
+# 工作流不需要 NPM_TOKEN secret —— npm 通过 GitHub 的 OIDC 身份令牌
+# 换取一次性的短期凭据。这样仓库里不存在可泄露的长期密钥。
+#
+# 一次性前置配置（在 npmjs.com 网页完成，无法用 CLI 代替）：
+#   1. 先在 npmjs.com 创建包 dsh-hindsight-gui（首次发布必须先建包）
+#   2. 打开该包 → Settings → Trusted Publisher → GitHub Actions
+#   3. 填入：
+#        Organization or user : KouzakiUmi
+#        Repository           : dsh-hindsight-gui
+#        Workflow filename    : publish.yml      ← 必须与本文件同名
+#
+# Trusted publishing 需要 npm CLI >= 9.5.0；本仓库的发布 job 固定用 Node 22
+# 自带的 npm 11，并要求 `provenance` 与 registry 的信任链一致。
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  # 手动触发用于演练与排错：默认 dry-run，不真正发布。
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "只构建并检查，不发布（默认 true）"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tag must match package.json version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const { version, name } = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (process.env.RELEASE_TAG !== `v${version}`) {
+            throw new Error(`tag ${process.env.RELEASE_TAG} does not match ${name}@${version}`);
+          }
+          console.log(`verified ${name}@${version}`);
+          NODE
+
+      - name: Install build dependencies
+        run: npm install --ignore-scripts
+
+      # 提交的 bundle 就是发布产物，必须与源码一致，否则会发布一个
+      # 和自己源码对不上的包。
+      - name: Client bundle is reproducible
+        run: |
+          set -euo pipefail
+          cp lib/client.js /tmp/client.js.committed
+          node scripts/build-client.mjs
+          if ! diff -q /tmp/client.js.committed lib/client.js >/dev/null; then
+            echo "::error::lib/client.js differs from a fresh build — run 'pnpm build:client' and commit the result"
+            diff -u /tmp/client.js.committed lib/client.js | head -40 || true
+            exit 1
+          fi
+          echo "bundle matches its source"
+
+      - name: Manifest, id consistency and syntax checks
+        run: node scripts/check-manifest.mjs
+
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist
+          mv dist/dsh-hindsight-gui-*.tgz dist/dsh-hindsight-gui.tgz
+          ls -l dist
+
+      - name: Validate tarball contents
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pkg
+          tar -xzf dist/dsh-hindsight-gui.tgz -C /tmp/pkg
+          for f in package.json cordis.patch.yml lib/index.js lib/client.js; do
+            test -f "/tmp/pkg/package/$f" || { echo "::error::missing $f in tarball"; exit 1; }
+          done
+          # 源码与 node_modules 绝不能进包
+          if [ -d /tmp/pkg/package/src ] || [ -d /tmp/pkg/package/node_modules ]; then
+            echo "::error::tarball contains sources or node_modules"
+            exit 1
+          fi
+          node -e 'const p=require("/tmp/pkg/package/package.json"); if(p.name!=="dsh-hindsight-gui") throw new Error("wrong name: "+p.name)'
+          echo "tarball contents OK"
+
+      - name: Upload tarball for the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: dist/dsh-hindsight-gui.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      # Trusted publishing 的核心：换取 OIDC 身份令牌。
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Report the registry identity
+        id: whoami
+        run: |
+          set -euo pipefail
+          echo "registry: $(npm config get registry)"
+          echo "dry-run:  ${{ inputs.dry-run || false }}"
+
+      # 没有 NPM_TOKEN，也没有 NODE_AUTH_TOKEN —— 凭据由 OIDC 换取。
+      - name: Publish to npm
+        if: ${{ inputs.dry-run != true }}
+        run: |
+          set -euo pipefail
+          npm publish dist/dsh-hindsight-gui.tgz \
+            --provenance \
+            --access public \
+            --registry https://registry.npmjs.org
+          echo "::notice::published dsh-hindsight-gui@$(node -p "require('./package.json').version")"
+
+      - name: Report what would have been published
+        if: ${{ inputs.dry-run == true }}
+        run: |
+          set -euo pipefail
+          npm publish dist/dsh-hindsight-gui.tgz --dry-run --registry https://registry.npmjs.org
+          echo "::notice::dry run only — nothing was published"

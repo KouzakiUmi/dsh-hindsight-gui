@@ -201,6 +201,61 @@ scripts/check-manifest.mjs      仓库一致性校验
 
 ---
 
+## 发布 / Publishing
+
+发布到 npm 的包名是 **`dsh-hindsight-gui`**，推 `v*` tag 触发：
+
+The npm package is **`dsh-hindsight-gui`**. Releases are cut by pushing a `v*` tag:
+
+```bash
+# 先把版本号写进 package.json，并更新 CHANGELOG，然后
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+`.github/workflows/publish.yml` 会：校验 tag 与 `package.json` 版本一致 → 确认 `lib/client.js` 可从源码复现 → 跑 `check-manifest.mjs` → 打包并检查 tarball 内容（缺文件、混入 `src/` 或 `node_modules` 都会失败）→ 发布。
+
+### 鉴权：npm Trusted Publishing（OIDC）
+
+**工作流不保存任何长期 token。** 发布 job 只要 `id-token: write` 权限，npm 通过 GitHub 的 OIDC 身份令牌换取一次性凭据。因此仓库里没有可泄露的密钥，也不需要 `NPM_TOKEN` secret。
+
+**No long-lived token is stored anywhere.** The publish job needs only `id-token: write`; npm exchanges GitHub's OIDC identity token for a short-lived credential. There is no `NPM_TOKEN` secret to leak.
+
+一次性前置配置（**只能在 npmjs.com 网页完成，CLI 无法代替**）：
+
+One-time setup (this can only be done on npmjs.com, no CLI equivalent):
+
+1. 先在 npmjs.com **创建包** `dsh-hindsight-gui`（首次发布必须先建包）
+2. 打开该包 → **Settings → Trusted Publisher → GitHub Actions**
+3. 填入：
+
+   | 字段 | 值 |
+   | --- | --- |
+   | Organization or user | `KouzakiUmi` |
+   | Repository | `dsh-hindsight-gui` |
+   | Workflow filename | `publish.yml` |
+
+`Workflow filename` 必须与 `.github/workflows/` 下的文件名逐字一致，否则 OIDC 会被 npm 拒绝。
+
+`Workflow filename` must match the file in `.github/workflows/` exactly, or npm rejects the OIDC token.
+
+### 演练
+
+不消耗发布额度、也不真正发布的检查：
+
+A run that publishes nothing and uses no quota:
+
+```bash
+# GitHub Actions 页面手动触发，dry-run 默认开启
+# 或本地等价物：
+npm publish --dry-run
+```
+
+发布 job 绑在名为 `npm` 的 environment 上，可在 **Settings → Environments → npm** 里加保护规则（required reviewers 等），把发布审批与构建分开。
+
+The publish job is bound to an environment named `npm`; add protection rules (required reviewers) there to separate publishing approval from the build.
+
+---
+
 ## 上游 / Upstream
 
 Hindsight 本身未被修改，来自 [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight)（MIT）。本仓库是围绕它的界面集成。
