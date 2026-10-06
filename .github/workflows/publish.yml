@@ -136,11 +136,24 @@ jobs:
         with:
           name: npm-package
           path: dist
+          # 不加这一行时 tarball 会落在 dist/npm-package/ 下，
+          # 后续的 dist/dsh-hindsight-gui.tgz 不存在，npm 会把它当成
+          # git spec 去解析并报 "Permission denied (publickey)"。
+          merge-multiple: true
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: Locate the tarball
+        run: |
+          set -euo pipefail
+          TARBALL="$(find . -name 'dsh-hindsight-gui-*.tgz' -print -quit)"
+          test -n "$TARBALL" || { echo "::error::no tarball found"; exit 1; }
+          mv "$TARBALL" dist/dsh-hindsight-gui.tgz
+          ls -l dist/dsh-hindsight-gui.tgz
+          tar -tzf dist/dsh-hindsight-gui.tgz
 
       # 没有 NPM_TOKEN，也没有 NODE_AUTH_TOKEN —— 凭据由 OIDC 换取。
       - name: Publish to npm
