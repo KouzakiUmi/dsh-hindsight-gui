@@ -1,0 +1,49 @@
+{
+  "name": "dsh-hindsight-gui",
+  "version": "1.0.0",
+  "description": "Settings page for the Hindsight memory stack in the DSH sidebar, plus the scripts that provision and run an official Hindsight deployment on Windows.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "hindsight",
+    "agent-memory"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KouzakiUmi/dsh-hindsight-gui.git"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  }
+}

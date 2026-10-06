@@ -1,0 +1,12 @@
+node_modules/
+*.log
+*.tgz
+pack.json
+dist/
+
+# The bge-m3 ONNX graph, if a local embeddings cache is ever vendored here.
+models/
+*.onnx
+
+.DS_Store
+Thumbs.db

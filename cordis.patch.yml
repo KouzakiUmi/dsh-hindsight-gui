@@ -1,0 +1,10 @@
+# dsh-hindsight-gui —— 自我挂载（只 insert 本插件一行）
+#
+# 设置页是纯浏览器侧贡献：在左侧栏放一个图标按钮，点开后在页面里编辑
+# ~/.hindsight/coding-agent.json 并显示服务状态。
+# 主机侧只有两个同源路由（/plugins/dsh-hindsight-gui/status 与 /config），
+# 它们是浏览器半侧读写配置的代理——Hindsight API 不返回 CORS 头，浏览器
+# 无法跨域直连。这一行只是让主机侧那一半有归属。
+- insert:
+    - id: hindsight-gui
+      name: dsh-hindsight-gui

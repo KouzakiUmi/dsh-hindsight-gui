@@ -1,0 +1,21 @@
+# Normalize text files in the repository to LF so the committed bundle is
+# byte-identical to a fresh build on any platform. CI rebuilds lib/client.js
+# and diffs it against the committed copy; CRLF churn would fail that check
+# for reasons unrelated to the code.
+* text=auto eol=lf
+
+# These are executed by cmd.exe / wscript.exe / python.exe on Windows.
+# A .cmd/.vbs file with LF endings still runs, but CRLF is the native form and
+# keeps diffs honest against what is actually on disk.
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+*.py text eol=crlf
+
+# Lockfiles carry a checksum of the resolved tree, not line endings.
+pnpm-lock.yaml text eol=lf
+
+# Never touch these.
+*.png binary
+*.jpg binary
+*.onnx binary
+*.tgz binary
