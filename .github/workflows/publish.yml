@@ -157,11 +157,15 @@ jobs:
           tar -tzf dist/dsh-hindsight-gui.tgz
 
       # 没有 NPM_TOKEN，也没有 NODE_AUTH_TOKEN —— 凭据由 OIDC 换取。
+      #
+      # `./` 前缀是必需的：npm 11 把不带前缀的 `dist/x.tgz` 当成包 spec
+      # 去解析（dist → <org>/<repo>），于是对一个不存在的 git 远端执行
+      # ls-remote，报出误导性的 "Permission denied (publickey)"。
       - name: Publish to npm
         if: ${{ inputs.dry-run != true }}
         run: |
           set -euo pipefail
-          npm publish dist/dsh-hindsight-gui.tgz \
+          npm publish ./dist/dsh-hindsight-gui.tgz \
             --provenance \
             --access public \
             --registry https://registry.npmjs.org
@@ -171,5 +175,5 @@ jobs:
         if: ${{ inputs.dry-run == true }}
         run: |
           set -euo pipefail
-          npm publish dist/dsh-hindsight-gui.tgz --dry-run --registry https://registry.npmjs.org
+          npm publish ./dist/dsh-hindsight-gui.tgz --dry-run --registry https://registry.npmjs.org
           echo "::notice::dry run only — nothing was published"
