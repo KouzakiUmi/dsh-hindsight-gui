@@ -147,14 +147,16 @@ It is the only field the page accepts as free text that the host then fetches, s
 Install with the DSH CLI that ships with your Desktop app — not a globally installed `dsh` shim:
 
 ```bash
-git clone https://github.com/KouzakiUmi/dsh-hindsight-gui.git
-pnpm install
-dsh plugin --profile desktop add file:/path/to/dsh-hindsight-gui
+dsh plugin --profile desktop add dsh-hindsight-gui
 ```
 
 然后确认 `dsh-hindsight-gui` 在 profile 的 `dsh.profile.bundles` 列表里，**重启 DSH** 让 host 与浏览器两半重新加载。
 
 Then make sure `dsh-hindsight-gui` is listed in the profile's `dsh.profile.bundles`, and **restart DSH** so the host and browser halves reload.
+
+从源码安装（开发用）：`git clone` 后 `pnpm install`，再 `dsh plugin --profile desktop add file:/path/to/dsh-hindsight-gui`。
+
+To install from source (for development): `git clone`, `pnpm install`, then `dsh plugin --profile desktop add file:/path/to/dsh-hindsight-gui`.
 
 ### 记忆功能 / Memory
 

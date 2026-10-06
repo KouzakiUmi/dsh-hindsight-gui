@@ -1,7 +1,7 @@
 {
   "name": "dsh-hindsight-gui",
   "version": "1.0.0",
-  "description": "Settings page for the Hindsight memory stack in the DSH sidebar, plus the scripts that provision and run an official Hindsight deployment on Windows.",
+  "description": "A settings page for the Hindsight memory stack in the DeepSeek Harness sidebar.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
