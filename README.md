@@ -70,6 +70,8 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 | 连接 / Connection | **Hindsight API 地址** | `apiUrl` → `coding-agent.json` |
 | 连接 / Connection | **控制台地址（Control Plane）** | `controlPlaneUrl` → `dsh-hindsight-gui.json` |
 | 连接 / Connection | 插件日志级别（debug / info / warn / error） | `logLevel` → `coding-agent.json` |
+| 模型 / Models | 代码库勘察模型（Survey Model） | `surveyModel` → `coding-agent.json` |
+| 模型 / Models | 服务端各功能模型（反思/提取/合并/提炼） | `serverModels` → `dsh-hindsight-gui.json` |
 | 其他 / Other | 自动更新运行时 | `autoUpdate` → `coding-agent.json` |
 | 其他 / Other | 代码库勘察 | `codebaseSurvey` → `coding-agent.json` |
 

@@ -30,6 +30,7 @@ const PANEL_ID = 'hindsight-gui'
 /** Same-origin routes served by the host half. */
 const STATUS_URL = '/plugins/dsh-hindsight-gui/status'
 const CONFIG_URL = '/plugins/dsh-hindsight-gui/config'
+const MODELS_URL = '/plugins/dsh-hindsight-gui/models'
 
 /** Class-name prefix for this panel's hand-written stylesheet. */
 const PREFIX = 'dsh-hsp-'
@@ -139,6 +140,90 @@ function Row(props) {
 }
 
 /**
+ * A model selector field supporting both advertised list selection and manual custom typing.
+ */
+function ModelSelectField(props) {
+  const { label, hint, value, defaultValue = '', onChange, providers } = props
+
+  const allKnownRoutes = useMemo(() => {
+    const set = new Set()
+    for (const p of providers) {
+      if (!Array.isArray(p.models)) continue
+      for (const m of p.models) {
+        set.add(`${p.id}/${m.id}`)
+        set.add(m.id)
+      }
+    }
+    return set
+  }, [providers])
+
+  const [customMode, setCustomMode] = useState(false)
+  const isCustom = customMode || (value !== '' && !allKnownRoutes.has(value))
+
+  return (
+    <div className={PREFIX + 'field'}>
+      <span className={PREFIX + 'label'}>{label}</span>
+      <div className={PREFIX + 'control'}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <select
+            className={PREFIX + 'select'}
+            value={isCustom ? '__custom__' : value}
+            onChange={(e) => {
+              const selected = e.target.value
+              if (selected === '__custom__') {
+                setCustomMode(true)
+              } else {
+                setCustomMode(false)
+                onChange(selected)
+              }
+            }}
+          >
+            <option value="">{defaultValue ? `默认 (${defaultValue})` : '未指定（跟随系统默认）'}</option>
+            {providers.map((p) => (
+              <optgroup key={p.id} label={p.name || p.id}>
+                {(p.models || []).map((m) => {
+                  const routeKey = `${p.id}/${m.id}`
+                  return (
+                    <option key={routeKey} value={routeKey}>
+                      {m.name || m.id} ({p.id}/{m.id})
+                    </option>
+                  )
+                })}
+              </optgroup>
+            ))}
+            <option value="__custom__">自定义输入...</option>
+          </select>
+          {isCustom && (
+            <button
+              type="button"
+              className={PREFIX + 'btn'}
+              style={{ padding: '0 8px', fontSize: '12px' }}
+              onClick={() => {
+                setCustomMode(false)
+                onChange('')
+              }}
+              title="切换回选择列表"
+            >
+              列表
+            </button>
+          )}
+        </div>
+        {isCustom && (
+          <input
+            className={PREFIX + 'input'}
+            type="text"
+            value={value}
+            placeholder="例如 deepseek-flash 或 provider/model"
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
+        <span className={PREFIX + 'hint'}>{hint}</span>
+      </div>
+    </div>
+  )
+}
+
+/**
  * The settings page.
  * @returns the page element.
  */
@@ -148,6 +233,9 @@ function PanelPage() {
   // The Control Plane address lives in this plugin's own file, not in the
   // upstream config, so it is tracked separately from `draft`.
   const [cpDraft, setCpDraft] = useState(null)
+  // Server-side LLM model routing lives in dsh-hindsight-gui.json
+  const [serverModelsDraft, setServerModelsDraft] = useState({})
+  const [modelsState, setModelsState] = useState({ loading: false, providers: [], error: null })
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState(null)
   const [saveError, setSaveError] = useState(null)
@@ -163,16 +251,39 @@ function PanelPage() {
       .catch((error) => setStatus({ loading: false, data: null, error: String(error?.message ?? error) }))
   }, [])
 
+  const loadModels = useCallback(() => {
+    setModelsState((prev) => ({ ...prev, loading: true, error: null }))
+    fetch(MODELS_URL, { headers: { accept: 'application/json' } })
+      .then((res) => {
+        if (!res.ok) throw new Error('HTTP ' + String(res.status))
+        return res.json()
+      })
+      .then((data) => {
+        setModelsState({
+          loading: false,
+          providers: Array.isArray(data?.providers) ? data.providers : [],
+          error: null,
+        })
+      })
+      .catch((err) => {
+        setModelsState({ loading: false, providers: [], error: String(err?.message ?? err) })
+      })
+  }, [])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadModels() }, [loadModels])
 
   /** Seed the form from the loaded values. */
   useEffect(() => {
     if (status.data) setDraft({ ...status.data.config.values })
   }, [status.data])
 
-  /** Seed the Control Plane field from the resolved address. */
+  /** Seed the Control Plane field and serverModels from the resolved settings. */
   useEffect(() => {
-    if (status.data?.gui) setCpDraft(status.data.gui.controlPlaneUrl)
+    if (status.data?.gui) {
+      setCpDraft(status.data.gui.controlPlaneUrl)
+      setServerModelsDraft({ ...(status.data.gui.serverModels ?? {}) })
+    }
   }, [status.data])
 
   const dirty = useMemo(() => {
@@ -181,8 +292,15 @@ function PanelPage() {
     if (cpDraft !== null && status.data.gui) {
       if (cpDraft !== status.data.gui.controlPlaneUrl) return true
     }
+    if (serverModelsDraft && status.data.gui) {
+      const savedServer = status.data.gui.serverModels ?? {}
+      const allKeys = new Set([...Object.keys(serverModelsDraft), ...Object.keys(savedServer)])
+      for (const key of allKeys) {
+        if ((serverModelsDraft[key] ?? '') !== (savedServer[key] ?? '')) return true
+      }
+    }
     return Object.keys(draft).some((key) => draft[key] !== saved[key])
-  }, [draft, cpDraft, status.data])
+  }, [draft, cpDraft, serverModelsDraft, status.data])
 
   const set = useCallback((key, value) => {
     setDraft((previous) => (previous === null ? previous : { ...previous, [key]: value }))
@@ -196,15 +314,21 @@ function PanelPage() {
     setSaveError(null)
   }, [])
 
+  const setServerModel = useCallback((scope, val) => {
+    setServerModelsDraft((prev) => ({ ...prev, [scope]: val }))
+    setNotice(null)
+    setSaveError(null)
+  }, [])
+
   const save = useCallback(() => {
     if (!draft) return
     setSaving(true)
     setNotice(null)
     setSaveError(null)
-    // Both halves go in one request: the harness config keys and this
-    // plugin's own Control Plane address.
+    // Send both the upstream harness config keys and this plugin's settings (cpUrl, serverModels)
     const payloadBody = { ...draft }
     if (cpDraft !== null) payloadBody.controlPlaneUrl = cpDraft
+    if (serverModelsDraft !== null) payloadBody.serverModels = serverModelsDraft
     fetch(CONFIG_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -225,7 +349,7 @@ function PanelPage() {
         setSaving(false)
         setSaveError(String(error?.message ?? error))
       })
-  }, [draft, cpDraft])
+  }, [draft, cpDraft, serverModelsDraft])
 
   const data = status.data
   const api = data ? data.api : null
@@ -239,7 +363,7 @@ function PanelPage() {
     <div className={PREFIX + 'root'}>
       <div className={PREFIX + 'head'}>
         <h2 className={PREFIX + 'h'}>Hindsight 设置</h2>
-        <p className={PREFIX + 'sub'}>写入 ~/.hindsight/coding-agent.json。保存后下一轮对话生效，无需重启。</p>
+        <p className={PREFIX + 'sub'}>写入 ~/.hindsight/coding-agent.json 与 dsh-hindsight-gui.json。保存后下一轮对话生效，无需重启。</p>
       </div>
 
       {status.loading && draft === null && <div className={PREFIX + 'muted'}>读取中…</div>}
@@ -336,6 +460,69 @@ function PanelPage() {
           </div>
 
           <div className={PREFIX + 'card'}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h3 className={PREFIX + 'cardtitle'}>功能模型调用</h3>
+              <button
+                type="button"
+                className={PREFIX + 'btn'}
+                style={{ height: '24px', padding: '0 8px', fontSize: '11.5px' }}
+                onClick={loadModels}
+                disabled={modelsState.loading}
+              >
+                {modelsState.loading ? '获取模型中…' : '刷新 DSH 模型'}
+              </button>
+            </div>
+            <span className={PREFIX + 'hint'} style={{ marginTop: '-4px' }}>
+              直接从当前 DSH 环境已注册的 Provider 发现模型，支持下拉点选或手动指定。
+            </span>
+
+            <ModelSelectField
+              label="代码库勘察"
+              hint="新仓库或大规模更新时进行结构勘察（写入 coding-agent.json 的 surveyModel）。"
+              defaultValue="haiku"
+              value={draft.surveyModel ?? ''}
+              onChange={(val) => set('surveyModel', val)}
+              providers={modelsState.providers}
+            />
+
+            <ModelSelectField
+              label="反思推理"
+              hint="hindsight_reflect 记忆推理与问答。建议选用推理和长上下文能力强的模型（写入 serverModels.reflect）。"
+              defaultValue="MiniMax-M3"
+              value={serverModelsDraft.reflect ?? ''}
+              onChange={(val) => setServerModel('reflect', val)}
+              providers={modelsState.providers}
+            />
+
+            <ModelSelectField
+              label="事实提取"
+              hint="从会话中提取事实（Retain），Token 消耗量大。建议选用速度快、成本低且支持 JSON Schema 的模型（写入 serverModels.retain）。"
+              defaultValue="deepseek-flash"
+              value={serverModelsDraft.retain ?? ''}
+              onChange={(val) => setServerModel('retain', val)}
+              providers={modelsState.providers}
+            />
+
+            <ModelSelectField
+              label="记忆整理"
+              hint="后台聚合消歧与去重相似事实（Consolidation）。建议选用支持结构化输出的快速模型（写入 serverModels.consolidation）。"
+              defaultValue="deepseek-flash"
+              value={serverModelsDraft.consolidation ?? ''}
+              onChange={(val) => setServerModel('consolidation', val)}
+              providers={modelsState.providers}
+            />
+
+            <ModelSelectField
+              label="知识提炼"
+              hint="刷新结构化知识库页面（Mental Model Refresh，如架构图、概念规范）（写入 serverModels.mentalModel）。"
+              defaultValue="deepseek-flash"
+              value={serverModelsDraft.mentalModel ?? ''}
+              onChange={(val) => setServerModel('mentalModel', val)}
+              providers={modelsState.providers}
+            />
+          </div>
+
+          <div className={PREFIX + 'card'}>
             <h3 className={PREFIX + 'cardtitle'}>其他</h3>
             <label className={PREFIX + 'radio'}>
               <input type="checkbox" checked={draft.autoUpdate === true}
@@ -356,7 +543,10 @@ function PanelPage() {
             <button type="button" className={PREFIX + 'btn'} disabled={!dirty || saving}
               onClick={() => {
                 setDraft({ ...config.values })
-                if (data?.gui) setCpDraft(data.gui.controlPlaneUrl)
+                if (data?.gui) {
+                  setCpDraft(data.gui.controlPlaneUrl)
+                  setServerModelsDraft({ ...(data.gui.serverModels ?? {}) })
+                }
               }}>放弃更改</button>
             {dirty && !saving && <span className={PREFIX + 'muted'}>有未保存的更改</span>}
             {notice && <span className={PREFIX + 'notice'}>{notice}</span>}

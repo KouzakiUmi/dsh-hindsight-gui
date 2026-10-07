@@ -113,9 +113,9 @@ if (sourceTime > bundleTime) {
 // --- syntax check every shipped JS ---------------------------------------
 for (const relative of ['lib/index.js', 'lib/client.cjs', 'scripts/build-client.mjs']) {
   try {
-    execFileSync(process.execPath, ['--check', join(root, relative)], { stdio: 'pipe' })
+    execFileSync(process.execPath, ['--check', join(root, relative)], { stdio: 'ignore' })
   } catch (error) {
-    problems.push(`${relative}: ${error.stderr?.toString().split('\n')[0] ?? 'syntax error'}`)
+    problems.push(`${relative}: syntax check failed (exit code ${error.status ?? 1})`)
   }
 }
 
