@@ -70,12 +70,28 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 | 连接 / Connection | **Hindsight API 地址** | `apiUrl` → `coding-agent.json` |
 | 连接 / Connection | **控制台地址（Control Plane）** | `controlPlaneUrl` → `dsh-hindsight-gui.json` |
 | 连接 / Connection | 插件日志级别（debug / info / warn / error） | `logLevel` → `coding-agent.json` |
-| 模型 / Models | 代码库勘察模型（Survey Model） | `surveyModel` → `coding-agent.json` |
-| 模型 / Models | 服务端各功能模型（反思/提取/合并/提炼） | `serverModels` → `dsh-hindsight-gui.json` |
+| 模型 / Models | **代码库勘察模型（Codebase Survey）** | `surveyModel` → `coding-agent.json` |
+| 模型 / Models | **反思推理模型（Reflect LLM）** | `serverModels.reflect` → `dsh-hindsight-gui.json` |
+| 模型 / Models | **事实提取模型（Retain LLM）** | `serverModels.retain` → `dsh-hindsight-gui.json` |
+| 模型 / Models | **记忆整理模型（Consolidation LLM）** | `serverModels.consolidation` → `dsh-hindsight-gui.json` |
+| 模型 / Models | **知识提炼模型（Mental Model Refresh LLM）** | `serverModels.mentalModel` → `dsh-hindsight-gui.json` |
 | 其他 / Other | 自动更新运行时 | `autoUpdate` → `coding-agent.json` |
 | 其他 / Other | 代码库勘察 | `codebaseSurvey` → `coding-agent.json` |
 
-**两个地址写进不同的文件**：`apiUrl` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 上游根本不认识，放进去只会污染那个由集成维护的文件，所以存在插件自己的 `~/.hindsight/dsh-hindsight-gui.json` 里（路径可用 `HINDSIGHT_GUI_CONFIG` 覆盖）。
+### 模型选择机制 / Model selection details
+
+- **DSH 环境模型自动发现**：页面打开或点击「刷新 DSH 模型」时，调用 `/plugins/dsh-hindsight-gui/models`，直接拉取当前 DSH 环境中已配置 Provider（如 `minimax-cn`、`kimi-coding`、`commandcode` 等）注册的可用模型列表。
+- **自由切换自定义输入**：下拉列表不仅支持一键点选环境模型（格式为 `provider/model`），还支持随时切换到「自定义输入...」手动键入任意模型名（如 `deepseek-flash`）。
+- **暗色主题原生适配**：下拉选择框与弹出选项遵循 `color-scheme: dark`，与 DSH 客户端深色主题完全对齐。
+- **服务端各功能模型分工**：
+  - **代码库勘察（Survey）**：新仓库结构与规范分析，默认 `haiku`；保存至 `coding-agent.json`，下一轮对话立即生效。
+  - **反思推理（Reflect）**：响应 `hindsight_reflect` 深度记忆问答，推荐推理能力强的模型（默认 `MiniMax-M3`）。
+  - **事实提取（Retain）**：高频对话事实提炼，推荐成本低、响应快且支持 JSON Schema 的模型（默认 `deepseek-flash`）。
+  - **记忆整理（Consolidation）**：后台相似记忆去重聚合。
+  - **知识提炼（Mental Model）**：刷新持久化知识库页面（架构图与概念规范）。
+  - 服务端模型保存至 `dsh-hindsight-gui.json`，由启动脚本 `start-server.py` 读取并映射为 `HINDSIGHT_API_*_LLM_*` 环境变量。
+
+**两个地址与模型写进不同的文件**：`apiUrl` 和 `surveyModel` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 和 `serverModels` 存入插件自有配置文件 `~/.hindsight/dsh-hindsight-gui.json` 中。
 
 **The two addresses go to different files**: `apiUrl` is a key the upstream integration reads, so it stays in `coding-agent.json`. `controlPlaneUrl` is not a key upstream knows at all — writing it there would only pollute a file the integration maintains — so it lives in this plugin's own `~/.hindsight/dsh-hindsight-gui.json`.
 

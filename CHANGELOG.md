@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-07
+
+### Added
+
+- **Function model selection** — configure models for codebase survey (`surveyModel` in `coding-agent.json`) and Hindsight internal scopes (`serverModels.reflect`, `retain`, `consolidation`, `mentalModel` in `dsh-hindsight-gui.json`).
+- **DSH environment models discovery** — dynamically list models registered by host providers via `GET /plugins/dsh-hindsight-gui/models` with fallback to custom input.
+- **Dark theme support for dropdowns** — match DSH dark palette for `<select>`, `<option>` and `<optgroup>` with `color-scheme: dark`.
+
+## [1.0.0] - 2026-10-06
 
 ### Added
 
