@@ -139,37 +139,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-package
-          path: dist-artifact
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Locate the tarball
-        run: |
-          set -euo pipefail
-          TARBALL="$(find dist-artifact -name 'dsh-hindsight-gui*.tgz' -print -quit)"
-          test -n "$TARBALL" || { echo "::error::no tarball found in dist-artifact"; exit 1; }
-          mkdir -p dist
-          cp "$TARBALL" dist/dsh-hindsight-gui.tgz
-          echo "using dist/dsh-hindsight-gui.tgz (from $TARBALL)"
-          tar -tzf dist/dsh-hindsight-gui.tgz
+      - name: Install dependencies
+        run: npm install --ignore-scripts
 
       - name: Publish to npm
         if: ${{ inputs.dry-run != true }}
         run: |
           set -euo pipefail
-          npm publish ./dist/dsh-hindsight-gui.tgz \
-            --provenance \
-            --access public
-          echo "::notice::published dsh-hindsight-gui@$(node -p "require('./package.json').version")"
+          npm publish --provenance --access public
+          echo "::notice::published $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
 
       - name: Report what would have been published
         if: ${{ inputs.dry-run == true }}
         run: |
           set -euo pipefail
-          npm publish ./dist/dsh-hindsight-gui.tgz --dry-run
+          npm publish --dry-run
           echo "::notice::dry run only — nothing was published"
