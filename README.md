@@ -221,56 +221,45 @@ scripts/check-manifest.mjs      仓库一致性校验
 
 ## 发布 / Publishing
 
-发布到 npm 的包名是 **`dsh-hindsight-gui`**，推 `v*` tag 触发：
+每次推送到 `main`，GitHub Actions 会检查客户端构建、manifest 和打包内容，然后通过 npm Trusted Publishing 自动发布到 `latest`。PR 只检查，不发布。
 
-The npm package is **`dsh-hindsight-gui`**. Releases are cut by pushing a `v*` tag:
+Every push to `main` builds and validates the package, then publishes it to npm with Trusted Publishing. Pull requests only run checks.
 
-```bash
-# 先把版本号写进 package.json，并更新 CHANGELOG，然后
-git tag v1.0.0 && git push origin v1.0.0
-```
+### 自动版本号 / Automatic versions
 
-`.github/workflows/publish.yml` 会：校验 tag 与 `package.json` 版本一致 → 确认 `lib/client.js` 可从源码复现 → 跑 `check-manifest.mjs` → 打包并检查 tarball 内容（缺文件、混入 `src/` 或 `node_modules` 都会失败）→ 发布。
+- 如果 `package.json` 的版本高于 npm 上所有稳定版本，使用该版本。例如源代码为 `1.1.0`、npm 为 `1.0.0`，首次自动发布 `1.1.0`。
+- 否则在 npm 的最高稳定版本上递增 patch：`1.1.0` → `1.1.1` → `1.1.2`。
+- 自动版本号只写入 CI 中的发布包，不回写仓库。需要提升 minor 或 major 时，手动调整 `package.json`。
+- 已发布的同一提交重跑时跳过发布。不同发布任务共享并发组，防止同时选择相同版本。
+- 仍支持 `v*` 标签发布指定版本；标签必须等于 `package.json` 的版本，且不能重复覆盖 npm 上已有的版本。
 
-### 鉴权：npm Trusted Publishing（OIDC）
+CI uses the source version when it exceeds all published stable versions; otherwise it increments the highest published patch version. It changes only the CI package, without committing version changes back. Re-running an already published commit skips publishing. Tags remain available for explicit versions.
 
-**工作流不保存任何长期 token。** 发布 job 只要 `id-token: write` 权限，npm 通过 GitHub 的 OIDC 身份令牌换取一次性凭据。因此仓库里没有可泄露的密钥，也不需要 `NPM_TOKEN` secret。
+### 一次性 npm 授权 / One-time npm authorization
 
-**No long-lived token is stored anywhere.** The publish job needs only `id-token: write`; npm exchanges GitHub's OIDC identity token for a short-lived credential. There is no `NPM_TOKEN` secret to leak.
+包已存在于 npm。以包维护者账户打开 [包设置](https://www.npmjs.com/package/dsh-hindsight-gui/access)，在 Trusted Publisher 中选择 GitHub Actions，核对：
 
-一次性前置配置（**只能在 npmjs.com 网页完成，CLI 无法代替**）：
+| 字段 | 值 |
+| --- | --- |
+| Organization or user | `KouzakiUmi` |
+| Repository | `dsh-hindsight-gui` |
+| Workflow filename | `publish.yml` |
+| Environment name | 留空（此工作流没有使用 environment） |
+| Allowed actions | 允许 `npm publish` |
 
-One-time setup (this can only be done on npmjs.com, no CLI equivalent):
+The package already exists. Configure its Trusted Publisher for `KouzakiUmi/dsh-hindsight-gui`, workflow `publish.yml`, with no environment restriction, and allow direct `npm publish`.
 
-1. 先在 npmjs.com **创建包** `dsh-hindsight-gui`（首次发布必须先建包）
-2. 打开该包 → **Settings → Trusted Publisher → GitHub Actions**
-3. 填入：
+工作流使用 Node 24，并显式安装 npm 11；OIDC 发布要求 npm ≥11.5.1、Node ≥22.14.0。无需 `NPM_TOKEN` secret，也不依赖本机登录或 Windows Hello。包设置的授权字段必须与工作流匹配；已有配置过期或不匹配时，需要在 npm 端重新配置。
 
-   | 字段 | 值 |
-   | --- | --- |
-   | Organization or user | `KouzakiUmi` |
-   | Repository | `dsh-hindsight-gui` |
-   | Workflow filename | `publish.yml` |
+Trusted Publishing needs npm ≥11.5.1 and Node ≥22.14.0. The workflow uses Node 24 and explicitly installs npm 11. No npm token or local login is needed.
 
-`Workflow filename` 必须与 `.github/workflows/` 下的文件名逐字一致，否则 OIDC 会被 npm 拒绝。
+参考：[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)。
 
-`Workflow filename` must match the file in `.github/workflows/` exactly, or npm rejects the OIDC token.
+### 演练 / Dry run
 
-### 演练
+在 GitHub Actions 的 Publish 工作流点击 Run workflow，保留默认 `dry-run: true`。它会检查并上传待发布 tarball，不实际发布。手动实际发布时选择 `main` 并将 `dry-run` 设为 `false`。
 
-不消耗发布额度、也不真正发布的检查：
-
-A run that publishes nothing and uses no quota:
-
-```bash
-# GitHub Actions 页面手动触发，dry-run 默认开启
-# 或本地等价物：
-npm publish --dry-run
-```
-
-发布 job 绑在名为 `npm` 的 environment 上，可在 **Settings → Environments → npm** 里加保护规则（required reviewers 等），把发布审批与构建分开。
-
-The publish job is bound to an environment named `npm`; add protection rules (required reviewers) there to separate publishing approval from the build.
+Run the Publish workflow with its default `dry-run: true` to validate and upload the release tarball. Select `main` and disable dry-run for a manual release.
 
 ---
 
