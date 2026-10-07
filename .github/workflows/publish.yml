@@ -130,50 +130,38 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.dry-run != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: npm
     permissions:
-      # Trusted publishing 的核心：换取 OIDC 身份令牌。
       contents: read
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: npm-package
-          # download-artifact 会把上传时的目录层级原样还原：上传的是
-          # dist/dsh-hindsight-gui.tgz，所以解出来在 dist/dist/ 下。
           path: .
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
 
       - name: Locate the tarball
         run: |
           set -euo pipefail
-          # 匹配两种命名：带版本号的（npm pack 原名）与重命名后的
-          # dsh-hindsight-gui.tgz。只按带版本号的名字找会漏掉后者。
           TARBALL="$(find . -name 'dsh-hindsight-gui*.tgz' -not -path './node_modules/*' -print -quit)"
           test -n "$TARBALL" || { echo "::error::no tarball found in the workspace"; exit 1; }
           mkdir -p dist
           cp "$TARBALL" dist/dsh-hindsight-gui.tgz
           echo "using dist/dsh-hindsight-gui.tgz (from $TARBALL)"
           tar -tzf dist/dsh-hindsight-gui.tgz
-          # 提取 package.json 以便读取发布的版本号
           tar -xzf dist/dsh-hindsight-gui.tgz --strip-components=1 package/package.json
-          # 确保不存在干扰 OIDC 的残余 .npmrc
-          rm -f ~/.npmrc ./.npmrc /home/runner/work/_temp/.npmrc || true
 
-      # 没有 NPM_TOKEN，也没有 NODE_AUTH_TOKEN —— 凭据由 OIDC 换取。
-      #
-      # `./` 前缀是必需的：npm 11 把不带前缀的 `dist/x.tgz` 当成包 spec
-      # 去解析（dist → <org>/<repo>），于是对一个不存在的 git 远端执行
-      # ls-remote，报出误导性的 "Permission denied (publickey)"。
       - name: Publish to npm
         if: ${{ inputs.dry-run != true }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           npm publish ./dist/dsh-hindsight-gui.tgz \
-            --provenance \
             --access public \
             --registry https://registry.npmjs.org
           echo "::notice::published dsh-hindsight-gui@$(node -p "require('./package.json').version")"
