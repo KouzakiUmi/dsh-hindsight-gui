@@ -142,15 +142,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
       - name: Publish to npm
         if: ${{ inputs.dry-run != true }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          npm publish --provenance --access public
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Publishing via NPM_TOKEN secret..."
+            npm publish --access public
+          else
+            echo "Publishing via npm Trusted Publishing (OIDC)..."
+            # 当使用 OIDC 时，清除 setup-node 注入的 NODE_AUTH_TOKEN .npmrc
+            rm -f /home/runner/work/_temp/.npmrc ~/.npmrc || true
+            npm publish --provenance --access public
+          fi
           echo "::notice::published $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
 
       - name: Report what would have been published
