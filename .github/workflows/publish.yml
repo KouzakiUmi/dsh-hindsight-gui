@@ -135,10 +135,14 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v4
         with:
           name: npm-package
-          path: .
+          path: dist-artifact
 
       - uses: actions/setup-node@v4
         with:
@@ -147,13 +151,12 @@ jobs:
       - name: Locate the tarball
         run: |
           set -euo pipefail
-          TARBALL="$(find . -name 'dsh-hindsight-gui*.tgz' -not -path './node_modules/*' -print -quit)"
-          test -n "$TARBALL" || { echo "::error::no tarball found in the workspace"; exit 1; }
+          TARBALL="$(find dist-artifact -name 'dsh-hindsight-gui*.tgz' -print -quit)"
+          test -n "$TARBALL" || { echo "::error::no tarball found in dist-artifact"; exit 1; }
           mkdir -p dist
           cp "$TARBALL" dist/dsh-hindsight-gui.tgz
           echo "using dist/dsh-hindsight-gui.tgz (from $TARBALL)"
           tar -tzf dist/dsh-hindsight-gui.tgz
-          tar -xzf dist/dsh-hindsight-gui.tgz --strip-components=1 package/package.json
 
       - name: Publish to npm
         if: ${{ inputs.dry-run != true }}
