@@ -75,6 +75,12 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 | 模型 / Models | **事实提取模型（Retain LLM）** | `serverModels.retain` → `dsh-hindsight-gui.json` |
 | 模型 / Models | **记忆整理模型（Consolidation LLM）** | `serverModels.consolidation` → `dsh-hindsight-gui.json` |
 | 模型 / Models | **知识提炼模型（Mental Model Refresh LLM）** | `serverModels.mentalModel` → `dsh-hindsight-gui.json` |
+| Provider 覆盖 / Provider overrides | 为非内置 Provider 填 openai 兼端点与凭据（Base URL / API Key / 环境变量名） | `providerOverrides` → `dsh-hindsight-gui.json` |
+| 服务管理 / Service management | **启动服务 / 重启服务**按钮 | 动作（不写配置） |
+| 服务管理 / Service management | API 未运行时自动拉起 | `autoStart` → `dsh-hindsight-gui.json` |
+| 服务管理 / Service management | 启动命令覆盖（hindsight-api 完整路径，留空自动发现） | `serverCommand` → `dsh-hindsight-gui.json` |
+| 安全 / Security | 审计日志开关（`HINDSIGHT_API_AUDIT_LOG_ENABLED`） | `auditLogEnabled` → `dsh-hindsight-gui.json` |
+| 记忆库 / Banks | 按 bank 开关脱敏（Memory Defense：sensitive_data → redact） | bank config API（不落盘到本页文件） |
 | 其他 / Other | 自动更新运行时 | `autoUpdate` → `coding-agent.json` |
 | 其他 / Other | 代码库勘察 | `codebaseSurvey` → `coding-agent.json` |
 
@@ -89,7 +95,20 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
   - **事实提取（Retain）**：高频对话事实提炼，推荐成本低、响应快且支持 JSON Schema 的模型（默认 `deepseek-flash`）。
   - **记忆整理（Consolidation）**：后台相似记忆去重聚合。
   - **知识提炼（Mental Model）**：刷新持久化知识库页面（架构图与概念规范）。
-  - 服务端模型保存至 `dsh-hindsight-gui.json`，由启动脚本 `start-server.py` 读取并映射为 `HINDSIGHT_API_*_LLM_*` 环境变量。
+  - 服务端模型保存至 `dsh-hindsight-gui.json`；**插件在启动/重启服务时按当前设置动态构建 `HINDSIGHT_API_*_LLM_*` 环境变量**（见下文「服务管理」），不再依赖任何静态启动脚本。
+
+### 服务管理 / Service management
+
+插件自带服务生命周期管理，设置页就是服务运行配置的唯一真源：
+
+- **启动 / 重启按钮**：host 半侧发现 `hindsight-api` 可执行文件（顺序：设置页 `serverCommand` 覆盖 → `PATH` → uv/pip 默认安装位置），按当前设置构建环境后以独立进程启动，并轮询 `/health` 直到就绪（90 秒超时）。重启会先终止端口上的现有监听进程（无论它由谁启动）。
+- **自动启动**：勾选并保存后，打开设置页时若 API 未运行，页面会自动请求 host 拉起服务（45 秒冷却，避免反复拉起）。
+- **凭据解析链**：设置页 Provider 覆盖（直接填 Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → DSH 凭据库（`~/.dsh/.credentials.yaml`，best-effort）。**任何一环失败都会在状态区标红显示原因，绝不静默回退**。
+- **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。
+- **生效时机**：记忆类设置下一轮对话生效；服务端设置（模型路由、审计日志、Provider 覆盖、环境变量透传）在下次启动/重启时应用。页面用 `pendingRestart` 标记跟踪这一状态，并在服务运行中时显示「立即重启生效」横幅。
+- **审计日志**：`auditLogEnabled` 映射为 `HINDSIGHT_API_AUDIT_LOG_ENABLED`（部署级默认，可按 bank 在 Control Plane 覆盖）。
+- **脱敏（Memory Defense）**：按 bank 通过 bank config API 写入 `memory_defense` 策略（`sensitive_data → redact`），密钥/令牌等敏感串在入库前被打码。
+- **环境变量透传**：`serverEnv`（高级）可向服务进程注入任意 `HINDSIGHT_API_*` 变量（如数据库配置）；host 还会规范化 `NO_PROXY` 并设置 `PYTHONUTF8=1`。
 
 **两个地址与模型写进不同的文件**：`apiUrl` 和 `surveyModel` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 和 `serverModels` 存入插件自有配置文件 `~/.hindsight/dsh-hindsight-gui.json` 中。
 
@@ -98,15 +117,18 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 
 ### 只读展示 / Read-only display
 
-- **服务状态** — API 是否运行、健康状态、数据库类型、Control Plane 是否可达
-- **记忆库列表** — 每个 bank 的 id、fact 数量
+- **服务状态** — API 是否运行、健康状态、数据库类型、Control Plane 是否可达、启动入口与最近一次启动/重启结果
+- **路由解析预览** — 下次启动/重启将应用的各功能模型、凭据来源，以及解析失败的原因（标红）
+- **记忆库列表** — 每个 bank 的 id、fact 数量、脱敏开关状态
 - **本页不写的键** — 配置文件里本页不管理的键（如 `banks`、`paths`、`mapPathToBank`），折叠列出，保存时原样保留
 
-### 保存立即生效，无需重启
+### 生效时机 / When a save takes effect
 
-Hindsight 集成在每次 `loadConfig()` 调用时都重新读取配置文件，因此保存后的改动在**下一轮对话**就生效，不需要重启 DSH。
+记忆类设置（`disabled`、`bankId`、`surveyModel` 等）随集成每次 `loadConfig()` 重新读取，**下一轮对话**即生效，无需重启。
 
-Saving takes effect on the next turn — no restart. The Hindsight integration re-reads the config file on every `loadConfig()` call.
+服务端设置（`serverModels`、`auditLogEnabled`、`providerOverrides`、`serverEnv`、`serverCommand`）塑造的是**服务进程的环境**，在下次启动/重启时应用——页面会显示「pendingRestart」提示并提供重启按钮。
+
+Memory-side settings take effect on the next turn — the integration re-reads the config file on every `loadConfig()` call. Server-side settings shape the server process environment and apply on the next start/restart; the page tracks that with a pending-restart banner and offers the button.
 
 ---
 
