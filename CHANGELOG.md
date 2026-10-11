@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-11
+
+### Fixed
+
+- **Host half failed to mount on DSH 0.2.1-alpha.2** — the new `dsh-host-webserver` rejects a duplicate `(kind, path)` route registration instead of silently overwriting, and `bankdefense` registered the same exact path twice (once for GET, once for POST). The throw failed the plugin's fiber, so every route — including `/status` — went missing and the page showed nothing. GET and POST now dispatch inside one registered handler.
+
 ## [1.2.0] - 2026-10-11
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "dsh-hindsight-gui",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A settings page for the Hindsight memory stack in the DeepSeek Harness sidebar.",
   "type": "module",
   "main": "lib/index.js",
