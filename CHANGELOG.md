@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-11
+
+### Fixed
+
+- **Credential store lookup missed indented entries** — this machine's `~/.dsh/.credentials.yaml` keeps plain credential refs under a top-level `refs:` block at two-space indent (`  NAME: value`), which neither the column-0 flat form nor the `records:` block parser matched. Every provider whose key lived only in the store resolved as "not found", which in turn left hindsight-api without `HINDSIGHT_API_*_LLM_API_KEY` and crashed it at startup (`LLM API key is required`). The resolver now falls back to an indented `NAME: value` scalar under any top-level block.
+
 ## [1.2.1] - 2026-10-11
 
 ### Fixed
