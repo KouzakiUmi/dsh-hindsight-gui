@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-11
+
+### Fixed
+
+- **NO_PROXY IPv6 form crashed hindsight-api at startup** — httpx brackets IPv6 hosts itself when parsing NO_PROXY entries (`all://[::1]`), so entries must be BARE `::1`. The plugin appended bare `::1` (correct) but preserved an inherited bracketed `[::1]` entry verbatim; that entry fails `ipaddress.IPv6Address`, falls through to the wildcard mount `all://*[::1]`, and raises `httpx.InvalidURL: Invalid port: ':1]'` during OpenAI client construction. Inherited bracketed entries are now normalised to bare form.
+
 ## [1.2.2] - 2026-10-11
 
 ### Fixed
