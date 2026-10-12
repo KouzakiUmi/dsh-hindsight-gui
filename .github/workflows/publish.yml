@@ -45,6 +45,8 @@ jobs:
           diff -u /tmp/client.js.committed lib/client.js
       - name: Check manifest and syntax
         run: node scripts/check-manifest.mjs
+      - name: Run offline regression tests
+        run: npm test
       - name: Select release version
         id: release
         if: ${{ github.event_name != 'pull_request' }}

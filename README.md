@@ -24,13 +24,13 @@ This plugin is a **dashboard for the memory system**: it shows and adjusts that 
 
 ### 你需要自己部署 Hindsight
 
-**本插件不会安装、不会启动、也不会停止 Hindsight 服务。** 它只连接一个已经在运行的实例。所以使用顺序是：
+**本插件不会安装或部署 Hindsight。** 它可连接现有 API；对于已安装的本机 `hindsight-api`，也可由插件启动，并仅在确认属于当前 Cordis effect 所启动的直接子进程时尝试停止/重启。远端、HTTPS、IPv6 和非根路径地址仅供连接与只读查询，不支持本机进程管理。使用顺序是：
 
-**This plugin never installs, starts or stops a Hindsight server.** It only connects to one that is already running. The order is:
+**This plugin does not install or deploy Hindsight.** It can connect to an existing API, or launch an already-installed local `hindsight-api`. Stop/restart is restricted to a verified direct child of the current Cordis effect; remote, HTTPS, IPv6 and non-root-path URLs remain connectable but cannot be managed locally. The order is:
 
-1. **先部署 Hindsight** — 按 [官方文档](https://hindsight.vectorize.io/) 自行部署（Hindsight Cloud 或自托管），确认 API 端口在监听。
+1. **先准备 Hindsight** — 按 [官方文档](https://hindsight.vectorize.io/) 自行部署可连接的 API，或自行安装本机 `hindsight-api` 可执行文件供插件启动；插件不安装依赖。
 
-   **Deploy Hindsight first**, per the upstream documentation — either Hindsight Cloud or your own server — and make sure its API port is listening.
+   **Prepare Hindsight first**: deploy a connectable API yourself, or install the local `hindsight-api` executable for the plugin to launch. The plugin never installs dependencies.
 
 2. **再安装这两个 DSH 包** — 官方包提供 `hindsight_*` 工具，本插件提供配置界面。两者都装才会话里才有记忆功能。
 
@@ -99,16 +99,16 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 
 ### 服务管理 / Service management
 
-插件自带服务生命周期管理，设置页就是服务运行配置的唯一真源：
+插件自带受控的本机服务管理；本页保存的设置是下次插件启动的输入，不代表外部服务已经采用这些设置：
 
-- **启动 / 重启按钮**：host 半侧发现 `hindsight-api` 可执行文件（顺序：设置页 `serverCommand` 覆盖 → `PATH` → uv/pip 默认安装位置），按当前设置构建环境后以独立进程启动，并轮询 `/health` 直到就绪（90 秒超时）。重启会先终止端口上的现有监听进程（无论它由谁启动）。
-- **自动启动**：勾选并保存后，打开设置页时若 API 未运行，页面会自动请求 host 拉起服务（45 秒冷却，避免反复拉起）。
-- **凭据解析链**：设置页 Provider 覆盖（直接填 Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → DSH 凭据库（`~/.dsh/.credentials.yaml`，best-effort）。**任何一环失败都会在状态区标红显示原因，绝不静默回退**。
+- **启动 / 重启按钮**：host 查找已安装的 `hindsight-api`（`serverCommand` → `PATH` → 常见 uv/pip 位置），启动后轮询 `/health`（最长 90 秒）。仅当前 Cordis effect 保留的直接 ChildProcess 且 PID、操作系统启动时间与可执行路径核验一致时可尝试重启；端口占用不授予终止权限。监听 PID 不同则安全拒绝。Windows 仅使用不带 `/F` 的 `taskkill /PID` 温和尝试，失败须手动关闭，没有强制回退。热重载后旧服务可能仍存活，但新插件实例将其视为 unmanaged。
+- **自动启动**：开启后页面可请求 host 拉起未运行、且可管理的本机 API（45 秒冷却）；第三方实例不会被接管。
+- **凭据解析链**：设置页 Provider 覆盖（Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → `ctx.credentials.resolve` 宿主凭据服务；不直接扫描凭据 YAML。状态仅显示来源或失败原因，不返回密钥。
 - **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。
-- **生效时机**：记忆类设置下一轮对话生效；服务端设置（模型路由、审计日志、Provider 覆盖、环境变量透传）在下次启动/重启时应用。页面用 `pendingRestart` 标记跟踪这一状态，并在服务运行中时显示「立即重启生效」横幅。
+- **生效时机**：服务端设置下次成功启动时应用；运行配置只是本插件启动确认后的快照，不是第三方服务真实配置查询。外部实例的运行配置未知，`pendingRestart` 只对已确认的本插件实例有意义。
 - **审计日志**：`auditLogEnabled` 映射为 `HINDSIGHT_API_AUDIT_LOG_ENABLED`（部署级默认，可按 bank 在 Control Plane 覆盖）。
-- **脱敏（Memory Defense）**：按 bank 通过 bank config API 写入 `memory_defense` 策略（`sensitive_data → redact`），密钥/令牌等敏感串在入库前被打码。
-- **环境变量透传**：`serverEnv`（高级）可向服务进程注入任意 `HINDSIGHT_API_*` 变量（如数据库配置）；host 还会规范化 `NO_PROXY` 并设置 `PYTHONUTF8=1`。
+- **脱敏（Memory Defense）**：按 bank 仅编辑本页持有的规范规则 `{on: sensitive_data, action: redact}`，保留其它更强或自定义规则；不能据此保证第三方服务原始日志或历史备份已清理。
+- **环境变量透传**：`serverEnv`（高级）仅允许 `HINDSIGHT_API_*`、`NO_PROXY`/`no_proxy`、`PYTHONUTF8` 字符串变量；页面明确设置的模型、审计和 Provider 等值优先于透传值。
 
 **两个地址与模型写进不同的文件**：`apiUrl` 和 `surveyModel` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 和 `serverModels` 存入插件自有配置文件 `~/.hindsight/dsh-hindsight-gui.json` 中。
 
@@ -118,7 +118,7 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 ### 只读展示 / Read-only display
 
 - **服务状态** — API 是否运行、健康状态、数据库类型、Control Plane 是否可达、启动入口与最近一次启动/重启结果
-- **路由解析预览** — 下次启动/重启将应用的各功能模型、凭据来源，以及解析失败的原因（标红）
+- **路由解析预览** — 下次本插件启动/重启拟应用的模型与凭据来源及失败原因；已保存 Provider Key 仅返回 `secretConfigured`，留空/省略 Key 保留原值，非空输入更换，显式 `clearApiKey` 才清除
 - **记忆库列表** — 每个 bank 的 id、fact 数量、脱敏开关状态
 - **本页不写的键** — 配置文件里本页不管理的键（如 `banks`、`paths`、`mapPathToBank`），折叠列出，保存时原样保留
 
@@ -143,21 +143,22 @@ The Hindsight API answers on `127.0.0.1:8888` **without an `Access-Control-Allow
 ### 写入的安全性
 
 - **键白名单** — 只有上表列出的键可以被页面写入，其余一律拒绝并回报
-- **原子保存** — 写临时文件后 rename，中途崩溃不会留下半截配置
-- **保留备份** — 每次保存前把原文件复制为 `.bak`
+- **单文件原子保存** — 写临时文件后 rename；两个配置文件之间不是事务，失败时可能只保存一份，响应会明确报告部分保存，须刷新核对
+- **并发与损坏保护** — 保存需要两文件 revision 比对，文件损坏时拒绝覆盖；前端未保存编辑不会被轮询覆盖，错误状态可见
+- **保留备份** — 写入已有文件前复制为 `.bak`；备份及第三方原始日志不属于本页脱敏清理范围
 - **同源限制** — 必须是发往 DSH web server 自身端口的 loopback 同源请求；变更类请求还必须携带合法 `Origin`
 - **体积限制** — 请求体上限 32 KB，10 秒超时
 
 - **Key whitelist** — only the keys listed above are writable; the rest are rejected and reported back
-- **Atomic save** — temp file plus rename, so a crash cannot leave a half-written config; the previous file is copied to `.bak`
+- **Per-file atomic save and revision checks** — temp file plus rename and a `.bak` copy for existing files; the two files are not transactional and a partial save is reported. Corrupt files are not overwritten; refresh after a conflict. Host errors and log summaries are redacted, not third-party raw logs or historical backups.
 - **Same-origin only** — loopback requests on the DSH server's own port; mutating requests must also carry a valid `Origin`
 - **Size cap** — 32 KB request body, 10 s deadline
 
 ### 缺失配置时的行为
 
-配置文件不存在或 JSON 损坏时，页面照常打开并显示默认值（`logLevel` 为 `info`、`disabled` 为 `false`、动态命名开启），不会报错。这样第一次使用不必先手工创建文件。
+配置文件不存在时页面可显示默认值并首次保存；JSON 损坏或读取失败时会显示错误并拒绝覆盖，需先手动修复文件。
 
-A missing or malformed config file does not break the page: it opens with defaults and lets you create the file by saving.
+Missing config files can be created on first save. Malformed or unreadable files show an error and cannot be overwritten until repaired.
 
 ### 环境变量
 
@@ -172,31 +173,31 @@ A missing or malformed config file does not break the page: it opens with defaul
 
 The Control Plane address resolves in this order: the value saved from the page, then `HINDSIGHT_CP_URL`, then the default. The page shows both the current value and where it came from.
 
-### 控制台地址的校验
+### 地址校验
 
-这是页面唯一接受自由文本、随后又会被 host 拿去发起请求的字段，所以写入前会校验：仅限 `http`/`https`、不含内嵌凭据、不含 query 与 fragment。`javascript:`、`file:` 之类一律拒绝并返回明确错误，且此时**两个文件都不会被写入**。
+API、Control Plane 和 Provider Base URL 在保存前校验：仅限 `http`/`https`，不含内嵌凭据、query 或 fragment；保留合法的服务路径。非法地址会明确报错，不静默回退到另一实例。本机服务管理只支持根路径的 IPv4 回环 HTTP 地址。记忆库策略写入还会核对页面所指 API 地址，地址变化时返回 409，避免修改另一个实例的同名记忆库。
 
-It is the only field the page accepts as free text that the host then fetches, so it is validated before anything is written: `http`/`https` only, no embedded credentials, no query or fragment. `javascript:`, `file:` and the like are rejected with an explicit error, and in that case **neither file is written**.
+API, Control Plane and provider base URLs are validated before saving: HTTP(S) only, without credentials, query or fragment; valid base paths are preserved. Invalid URLs do not silently fall back to another instance. Local process management requires a root-path IPv4 loopback HTTP URL. Bank policy writes include the expected API base and reject a changed target with HTTP 409.
 
 ---
 
 ## 安装 / Installation
 
-用 DSH Desktop 自带的 CLI 安装（不是 PATH 上的全局 `dsh` shim）：
+统一通过 `dsh plugin` 操作目标 Profile；执行前核对命令入口和 Profile，不在 Profile 内裸跑 npm/pnpm 安装。以下使用 `web` 作为示例 Profile，不代表实际安装目标。一般插件兼容性以目标实际 DSH Core 版本及其导出契约为准，CLI、npm 管理器和桌面壳版本不是通用的额外兼容门槛。
 
-Install with the DSH CLI that ships with your Desktop app — not a globally installed `dsh` shim:
+Use `dsh plugin` for the target Profile after verifying the command entry and Profile. Do not run bare npm/pnpm installs inside a Profile. Plugin compatibility is based on the actual target DSH Core contracts, not a blanket CLI, npm-manager or desktop-shell version requirement:
 
 ```bash
-dsh plugin --profile desktop add dsh-hindsight-gui
+dsh plugin --profile web add dsh-hindsight-gui
 ```
 
 然后确认 `dsh-hindsight-gui` 在 profile 的 `dsh.profile.bundles` 列表里，**重启 DSH** 让 host 与浏览器两半重新加载。
 
 Then make sure `dsh-hindsight-gui` is listed in the profile's `dsh.profile.bundles`, and **restart DSH** so the host and browser halves reload.
 
-从源码安装（开发用）：`git clone` 后 `pnpm install`，再 `dsh plugin --profile desktop add file:/path/to/dsh-hindsight-gui`。
+从源码安装（开发用）：`git clone` 后 `pnpm install`，再 `dsh plugin --profile web add file:/path/to/dsh-hindsight-gui`。
 
-To install from source (for development): `git clone`, `pnpm install`, then `dsh plugin --profile desktop add file:/path/to/dsh-hindsight-gui`.
+To install from source (for development): `git clone`, `pnpm install`, then `dsh plugin --profile web add file:/path/to/dsh-hindsight-gui`.
 
 ### 记忆功能 / Memory
 
@@ -205,7 +206,7 @@ To install from source (for development): `git clone`, `pnpm install`, then `dsh
 The memory tools come from the official package, enabled alongside this plugin:
 
 ```bash
-dsh plugin --profile desktop add @vectorize-io/hindsight-coding-agents
+dsh plugin --profile web add @vectorize-io/hindsight-coding-agents
 ```
 
 ### Hindsight 服务端 / Hindsight server
@@ -222,6 +223,8 @@ This plugin **does not deploy a Hindsight server** — see "You need to deploy H
 pnpm install
 pnpm build:client              # esbuild → lib/client.cjs → lib/client.js
 node scripts/check-manifest.mjs  # 校验 manifest、命名一致性与语法
+node scripts/test-host.mjs       # 离线 host 回归测试
+node scripts/test-client.mjs     # 离线 client 回归测试
 ```
 
 浏览器半侧打包为 CJS 模块并包进 `window.__ModuleLoader__.load({ id: … })`，`react` 保持 external（由宿主提供）。

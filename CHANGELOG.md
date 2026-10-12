@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-10-12
+
+### Changed
+
+- Restrict service management to a verified direct child of the current Cordis effect (PID, OS start time and executable path); port ownership alone never authorizes termination. A reload may leave an old server running, but the new instance treats it as unmanaged. Windows shutdown only attempts non-force `taskkill /PID`; failure requires manual shutdown.
+- Preserve read-only connections to remote, HTTPS, IPv6 and non-root-path API addresses, without offering local process management for them. Show running configuration only as a confirmed plugin launch snapshot, not as an inspection of external instances.
+- Resolve credentials via the host `ctx.credentials.resolve` service instead of reading credential YAML directly. Expose `secretConfigured` rather than saved API keys; omitted/empty keys retain the existing value, and explicit `clearApiKey` removes it.
+- Limit `serverEnv` to `HINDSIGHT_API_*`, `NO_PROXY`/`no_proxy` and `PYTHONUTF8`; explicit GUI settings take precedence. Bank Defense edits only the canonical `sensitive_data`/`redact` rule and preserves stronger or custom rules.
+
+### Fixed
+
+- Reject stale revisions and damaged configuration instead of silently overwriting; explain that two per-file atomic saves are not a cross-file transaction and may partially complete. Protect unsaved client edits from status refreshes and expose error states.
+- Redact host errors and log summaries; this does not clean third-party raw service logs or historical backups. Serialize server actions and cancel pending operations on dispose.
+
+### Tests
+
+- Add offline `node scripts/test-host.mjs` and `node scripts/test-client.mjs` regression scripts, wired to `npm test` and the CI verification job. Fixtures do not constitute live-service validation.
+
 ## [1.2.3] - 2026-10-11
 
 ### Fixed

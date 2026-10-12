@@ -52,6 +52,33 @@ const SERVER_SCOPES = [
   { key: 'mentalModel', label: '知识提炼', hint: '刷新结构化知识库页面（Mental Model Refresh，如架构图、概念规范）。' },
 ]
 
+/** Only loopback targets may be auto-started — never touch a remote deployment. */
+function isLoopbackUrl(url) {
+  if (typeof url !== 'string' || url === '') return false
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === 'localhost'
+      || host === '::1'
+      || host === '0:0:0:0:0:0:0:1'
+      || /^127(?:\.\d{1,3}){3}$/.test(host)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The canonical simple redact rule this page manages. Richer policies (e.g. a
+ * strong block rule with extra fields) are preserved server-side and must not
+ * count as "enabled" for this toggle.
+ */
+function hasSimpleRedactRule(rules) {
+  return Array.isArray(rules) && rules.some((rule) =>
+    rule !== null && typeof rule === 'object'
+    && rule.on === 'sensitive_data'
+    && rule.action === 'redact'
+    && Object.keys(rule).length === 2)
+}
+
 const CSS = [
   /* ---- shell: fluid, no fixed width ------------------------------------- */
   '.' + PREFIX + 'root{box-sizing:border-box;height:100%;min-height:0;overflow:auto;',
@@ -104,6 +131,9 @@ const CSS = [
   /* ---- banners, lists, misc --------------------------------------------- */
   '.' + PREFIX + 'banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;',
   'border-radius:9px;font-size:12.5px;border:.5px solid rgba(217,119,6,.3);background:rgba(217,119,6,.10);color:#92400e;}',
+  '.' + PREFIX + 'errbanner{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:9px 12px;',
+  'border-radius:9px;font-size:12.5px;border:.5px solid rgba(220,38,38,.35);background:rgba(220,38,38,.10);color:#b91c1c;}',
+  '.' + PREFIX + 'errbanner>span{min-width:0;overflow-wrap:anywhere;flex:1 1 auto;}',
   '.' + PREFIX + 'list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;}',
   '.' + PREFIX + 'item{display:flex;align-items:center;gap:12px;padding:7px 0;min-width:0;',
   'border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,.07));}',
@@ -129,6 +159,7 @@ const CSS = [
   'body[data-ds-dark-theme] .' + PREFIX + 'details{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'warn{color:#fbbf24;background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.3);}',
   'body[data-ds-dark-theme] .' + PREFIX + 'banner{color:#fbbf24;background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.3);}',
+  'body[data-ds-dark-theme] .' + PREFIX + 'errbanner{color:#f87171;background:rgba(220,38,38,.14);border-color:rgba(220,38,38,.4);}',
   '@media (prefers-color-scheme:dark){',
   ' .' + PREFIX + 'root{color-scheme:dark;}',
   ' .' + PREFIX + 'input,.' + PREFIX + 'select{color-scheme:dark;background-color:var(--dsw-alias-bg-layer-2,#212123);color:var(--dsw-alias-label-primary,#f9fafb);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.18));}',
@@ -137,6 +168,7 @@ const CSS = [
   ' .' + PREFIX + 'btn{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.14));background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));}',
   ' .' + PREFIX + 'warn{color:#fbbf24;background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.3);}',
   ' .' + PREFIX + 'banner{color:#fbbf24;background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.3);}',
+  ' .' + PREFIX + 'errbanner{color:#f87171;background:rgba(220,38,38,.14);border-color:rgba(220,38,38,.4);}',
   '}',
 ].join('')
 
@@ -290,30 +322,76 @@ function PanelPage() {
   const [auditDraft, setAuditDraft] = useState(null)
   const [autoStartDraft, setAutoStartDraft] = useState(false)
   const [serverCommandDraft, setServerCommandDraft] = useState('')
+  // Override drafts never carry the stored key: `apiKey` holds only what the
+  // user just typed (empty = keep the stored key), `clearApiKey` asks to wipe.
   const [overridesDraft, setOverridesDraft] = useState({})
-  const [modelsState, setModelsState] = useState({ loading: false, providers: [], error: null })
+  // Model discovery carries its own state machine: ok / partial / error /
+  // unavailable — an empty provider list is NOT success when state says error.
+  const [modelsState, setModelsState] = useState({ loading: false, providers: [], errors: [], state: null, sampledAt: null, error: null })
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState(null)
   const [saveError, setSaveError] = useState(null)
   const [serverBusy, setServerBusy] = useState(null) // 'start' | 'restart' | null
   const [serverMessage, setServerMessage] = useState(null)
+  // Start/restart failures go here (prominent banner) instead of the plain
+  // notice line, so a failed launch is something the user can act on.
+  const [serverError, setServerError] = useState(null)
   const [defense, setDefense] = useState({})
+
+  /**
+   * CAS baseline: the snapshot of server state the current drafts were seeded
+   * from. `dirty` compares against this (not the latest poll), so the 15s
+   * refresh never disturbs an in-progress edit; a successful save and a manual
+   * discard reset it explicitly. Also carries the SHA256 revisions the save
+   * sends for optimistic-concurrency checking.
+   */
+  const baselineRef = useRef(null)
+  /**
+   * Bumped every time the baseline is re-snapshotted. The ref alone would not
+   * retrigger the `dirty` memo (its deps are the drafts), leaving stale dirty
+   * state after a save — this epoch is a real dep so dirty recomputes.
+   */
+  const [, setBaselineEpoch] = useState(0)
+  /** Mirror of `dirty` so effects/handlers can read it without re-running per keystroke. */
+  const dirtyRef = useRef(false)
+  /** Mirror of `defense` so toggle handlers can restore the pre-click entry. */
+  const defenseRef = useRef({})
+  /** Last seen API base; when it changes the cached per-bank policies are stale. */
+  const apiBaseRef = useRef(null)
+  /** Bumped on API-base change; a defense response from an older base is dropped. */
+  const defenseGenRef = useRef(0)
+  /** Generation counters: a slow/late response must never overwrite a newer one. */
+  const statusGenRef = useRef(0)
+  const modelsGenRef = useRef(0)
+  /** Flipped on unmount; every async continuation bails out afterwards. */
+  const mountedRef = useRef(true)
 
   /** Cooldown ref so a down API with auto-start on does not spawn-storm. */
   const autoStartCooldownRef = useRef(0)
+  /** Consecutive auto-start failures; past AUTO_START_MAX_FAILURES the page stops retrying on its own. */
+  const autoStartFailuresRef = useRef(0)
+  const AUTO_START_MAX_FAILURES = 2
 
   const load = useCallback(() => {
+    const generation = ++statusGenRef.current
     setStatus((previous) => ({ ...previous, loading: true, error: null }))
     fetch(STATUS_URL, { headers: { accept: 'application/json' } })
       .then((response) => {
         if (!response.ok) throw new Error('HTTP ' + String(response.status))
         return response.json()
       })
-      .then((data) => setStatus({ loading: false, data, error: null }))
-      .catch((error) => setStatus((previous) => ({ loading: false, data: previous.data, error: String(error?.message ?? error) })))
+      .then((data) => {
+        if (!mountedRef.current || generation !== statusGenRef.current) return
+        setStatus({ loading: false, data, error: null })
+      })
+      .catch((error) => {
+        if (!mountedRef.current || generation !== statusGenRef.current) return
+        setStatus((previous) => ({ loading: false, data: previous.data, error: String(error?.message ?? error) }))
+      })
   }, [])
 
   const loadModels = useCallback(() => {
+    const generation = ++modelsGenRef.current
     setModelsState((prev) => ({ ...prev, loading: true, error: null }))
     fetch(MODELS_URL, { headers: { accept: 'application/json' } })
       .then((res) => {
@@ -321,19 +399,31 @@ function PanelPage() {
         return res.json()
       })
       .then((data) => {
+        if (!mountedRef.current || generation !== modelsGenRef.current) return
         setModelsState({
           loading: false,
           providers: Array.isArray(data?.providers) ? data.providers : [],
+          errors: Array.isArray(data?.errors) ? data.errors : [],
+          // Older hosts answer with bare `{ providers }` — that is a real list.
+          state: typeof data?.state === 'string' ? data.state : 'ok',
+          sampledAt: typeof data?.sampledAt === 'string' ? data.sampledAt : null,
           error: null,
         })
       })
       .catch((err) => {
-        setModelsState({ loading: false, providers: [], error: String(err?.message ?? err) })
+        if (!mountedRef.current || generation !== modelsGenRef.current) return
+        setModelsState({ loading: false, providers: [], errors: [], state: 'error', sampledAt: null, error: String(err?.message ?? err) })
       })
   }, [])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { loadModels() }, [loadModels])
+
+  /** Unmount guard: async continuations check this before touching any state. */
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   /** Poll status while the page is open and visible. */
   useEffect(() => {
@@ -344,62 +434,176 @@ function PanelPage() {
     return () => clearInterval(timer)
   }, [load])
 
-  /** Seed the form from the loaded values. */
-  useEffect(() => {
-    if (status.data) setDraft({ ...status.data.config.values })
-  }, [status.data])
+  /**
+   * Normalise a providerOverrides entry to the draft shape. The stored key is
+   * never kept: the host contract only returns `secretConfigured`, and in a
+   * draft a non-empty `apiKey` means "replace" while empty means "keep".
+   */
+  const toOverrideDraft = useCallback((entry) => ({
+    baseUrl: typeof entry?.baseUrl === 'string' ? entry.baseUrl : '',
+    apiKeyEnv: typeof entry?.apiKeyEnv === 'string' ? entry.apiKeyEnv : '',
+    apiKey: '',
+    clearApiKey: false,
+    // Display-only mirror of the host flag; it is never sent back.
+    secretConfigured: entry?.secretConfigured === true,
+  }), [])
 
-  /** Seed the plugin-own settings from the resolved values. */
-  useEffect(() => {
-    const gui = status.data?.gui
-    if (gui) {
-      setCpDraft(gui.controlPlaneUrl)
-      setServerModelsDraft({ ...(gui.serverModels ?? {}) })
-      setAuditDraft(gui.auditLogEnabled)
-      setAutoStartDraft(gui.autoStart === true)
-      setServerCommandDraft(gui.serverCommand ?? '')
-      setOverridesDraft({ ...(gui.providerOverrides ?? {}) })
+  /** Snapshot the server state the drafts were seeded from (the CAS baseline). */
+  const snapshotBaseline = useCallback((data) => {
+    const overrides = {}
+    const saved = data?.gui?.providerOverrides
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      for (const [id, entry] of Object.entries(saved)) overrides[id] = toOverrideDraft(entry)
     }
-  }, [status.data])
+    baselineRef.current = {
+      configValues: { ...(data?.config?.values ?? {}) },
+      controlPlaneUrl: data?.gui?.controlPlaneUrl ?? '',
+      serverModels: { ...(data?.gui?.serverModels ?? {}) },
+      auditLogEnabled: data?.gui?.auditLogEnabled ?? null,
+      autoStart: data?.gui?.autoStart === true,
+      serverCommand: data?.gui?.serverCommand ?? '',
+      providerOverrides: overrides,
+      configRevision: data?.config?.revision ?? null,
+      guiRevision: data?.gui?.revision ?? null,
+    }
+    setBaselineEpoch((epoch) => epoch + 1)
+  }, [toOverrideDraft])
 
-  /** Load each bank's memory-defense policy when the bank list changes. */
+  /** Reset every draft from a status document. */
+  const resetDrafts = useCallback((data) => {
+    const overrides = {}
+    const saved = data?.gui?.providerOverrides
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      for (const [id, entry] of Object.entries(saved)) overrides[id] = toOverrideDraft(entry)
+    }
+    setDraft({ ...(data?.config?.values ?? {}) })
+    setCpDraft(data?.gui?.controlPlaneUrl ?? '')
+    setServerModelsDraft({ ...(data?.gui?.serverModels ?? {}) })
+    setAuditDraft(data?.gui?.auditLogEnabled ?? null)
+    setAutoStartDraft(data?.gui?.autoStart === true)
+    setServerCommandDraft(data?.gui?.serverCommand ?? '')
+    setOverridesDraft(overrides)
+  }, [toOverrideDraft])
+
+  const dirty = (() => {
+    const base = baselineRef.current
+    if (!draft || !base) return false
+    if (cpDraft !== null && cpDraft !== base.controlPlaneUrl) return true
+    const allKeys = new Set([...Object.keys(serverModelsDraft), ...Object.keys(base.serverModels)])
+    for (const key of allKeys) {
+      if ((serverModelsDraft[key] ?? '') !== (base.serverModels[key] ?? '')) return true
+    }
+    if ((auditDraft ?? null) !== base.auditLogEnabled) return true
+    if (autoStartDraft !== base.autoStart) return true
+    if ((serverCommandDraft ?? '') !== base.serverCommand) return true
+    const overrideKeys = new Set([...Object.keys(overridesDraft), ...Object.keys(base.providerOverrides)])
+    for (const key of overrideKeys) {
+      const a = overridesDraft[key] ?? {}
+      const b = base.providerOverrides[key] ?? {}
+      if ((a.baseUrl ?? '') !== (b.baseUrl ?? '')) return true
+      if ((a.apiKeyEnv ?? '') !== (b.apiKeyEnv ?? '')) return true
+      if ((a.apiKey ?? '') !== '') return true
+      if (a.clearApiKey === true && b.secretConfigured === true) return true
+    }
+    return Object.keys(draft).some((key) => draft[key] !== base.configValues[key])
+  })()
+
+  /** Keep the dirty flag and a live-draft mirror in refs for async continuations. */
+  const liveRef = useRef(null)
+  useEffect(() => {
+    dirtyRef.current = dirty
+    liveRef.current = { draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft }
+  })
+
+  /**
+   * Seed drafts from the loaded values — but never over unsaved edits: the 15s
+   * poll refreshes the displayed status while a dirty draft stays untouched.
+   */
+  useEffect(() => {
+    const data = status.data
+    if (!data) return
+    if (baselineRef.current !== null && dirtyRef.current) return
+    snapshotBaseline(data)
+    resetDrafts(data)
+  }, [status.data, snapshotBaseline, resetDrafts])
+
+  /** The API target changed (edited & saved elsewhere): cached bank policies belong to the old server. */
+  const apiBase = status.data?.api?.url ?? null
+  useEffect(() => {
+    if (apiBaseRef.current === apiBase) return
+    apiBaseRef.current = apiBase
+    defenseGenRef.current += 1
+    setDefense({})
+  }, [apiBase])
+
+  /** Mirror `defense` for event handlers. */
+  useEffect(() => { defenseRef.current = defense }, [defense])
+
+  /** Load each bank's memory-defense policy when the bank list changes or the cache is reset. */
   const banks = status.data && Array.isArray(status.data.banks) ? status.data.banks : []
   useEffect(() => {
     for (const bank of banks) {
       if (defense[bank.id] !== undefined) continue
-      setDefense((prev) => ({ ...prev, [bank.id]: { loading: true, enabled: false, action: null, error: null } }))
-      fetch(`${BANKDEFENSE_URL}?bank=${encodeURIComponent(bank.id)}`, { headers: { accept: 'application/json' } })
-        .then((res) => {
-          if (!res.ok) throw new Error('HTTP ' + String(res.status))
-          return res.json()
+      const generation = defenseGenRef.current
+      setDefense((prev) => ({ ...prev, [bank.id]: { loading: true, unknown: false, enabled: false, action: null, error: null } }))
+      // `apiUrl` lets the host verify we are reading the API we think we are.
+      const query = `bank=${encodeURIComponent(bank.id)}${apiBase ? `&apiUrl=${encodeURIComponent(apiBase)}` : ''}`
+      fetch(`${BANKDEFENSE_URL}?${query}`, { headers: { accept: 'application/json' } })
+        .then(async (res) => {
+          const payload = await res.json().catch(() => null)
+          if (!res.ok) throw new Error(payload?.error ?? ('HTTP ' + String(res.status)))
+          if (payload === null) throw new Error('防护策略响应格式无效')
+          return payload
         })
         .then((data) => {
+          // Drop responses from a previous API base or after unmount.
+          if (!mountedRef.current || generation !== defenseGenRef.current) return
           setDefense((prev) => ({
             ...prev,
             [bank.id]: {
               loading: false,
-              enabled: data?.memoryDefense?.enabled === true,
-              action: data?.memoryDefense?.rules?.[0]?.action ?? null,
+              unknown: false,
+              enabled: data?.memoryDefense?.enabled === true && hasSimpleRedactRule(data?.memoryDefense?.rules),
+              action: null,
               error: null,
             },
           }))
         })
         .catch((err) => {
-          setDefense((prev) => ({ ...prev, [bank.id]: { loading: false, enabled: false, action: null, error: String(err?.message ?? err) } }))
+          if (!mountedRef.current || generation !== defenseGenRef.current) return
+          // Unknown policy: the toggle stays disabled so the page cannot
+          // write a policy it never read.
+          setDefense((prev) => ({ ...prev, [bank.id]: { loading: false, unknown: true, enabled: false, action: null, error: String(err?.message ?? err) } }))
         })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run when the bank list identity changes
-  }, [banks.map((b) => b.id).join('|')])
+  }, [banks.map((b) => b.id).join('|'), defense])
 
   /**
-   * Auto-start: when the option is on and the API is down, ask the host to
-   * launch it. Rate-limited so a failing start cannot spawn-storm.
+   * Auto-start: when the option is on and nothing listens on the port, ask the
+   * host to launch it. Never fire when the status request itself failed or the
+   * API state is 'unknown' — a blind launch would hide the real problem; a
+   * failed health probe alone is fine as long as the host confirmed the port
+   * is free (ownership 'stopped' + canStart). Rate-limited so a failing start
+   * cannot spawn-storm.
    */
   useEffect(() => {
-    const gui = status.data?.gui
-    const api = status.data?.api
-    if (gui?.autoStart !== true || !api || api.up !== false) return
+    const data = status.data
+    const gui = data?.gui
+    const api = data?.api
+    const srv = data?.server
+    if (!data || status.error !== null) return
+    if (api?.up === true) autoStartFailuresRef.current = 0 // Service confirmed up: allow fresh retries.
+    if (api?.state === 'unknown') return
+    if (gui?.autoStart !== true) return
+    if (!isLoopbackUrl(api?.url)) return
     if (serverBusy !== null) return
+    if (srv && srv.ownership !== undefined) {
+      // New contract: only the host's verdict (port free + allowed + idle).
+      if (srv.ownership !== 'stopped' || srv.canStart !== true || srv.operation != null) return
+    } else if (api?.up !== false) {
+      return // Legacy host: keep the old behaviour (only when the API is down).
+    }
+    if (autoStartFailuresRef.current >= AUTO_START_MAX_FAILURES) return // Wait for the user, not another loop.
     if (Date.now() < autoStartCooldownRef.current) return
     autoStartCooldownRef.current = Date.now() + 45000
     setServerBusy('start')
@@ -414,37 +618,23 @@ function PanelPage() {
         return payload
       })
       .then((payload) => {
+        if (!mountedRef.current) return
+        autoStartFailuresRef.current = 0
         setStatus({ loading: false, data: payload.status, error: null })
+        setServerError(null)
         setServerMessage(payload.alreadyRunning === true ? '服务已在运行。' : '已自动启动 Hindsight 服务。')
       })
-      .catch((error) => setServerMessage('自动启动失败：' + String(error?.message ?? error)))
-      .finally(() => setServerBusy(null))
-  }, [status.data, serverBusy])
-
-  const dirty = useMemo(() => {
-    if (!draft || !status.data) return false
-    const saved = status.data.config.values
-    const gui = status.data.gui
-    if (cpDraft !== null && gui && cpDraft !== gui.controlPlaneUrl) return true
-    if (gui) {
-      const savedServer = gui.serverModels ?? {}
-      const allKeys = new Set([...Object.keys(serverModelsDraft), ...Object.keys(savedServer)])
-      for (const key of allKeys) {
-        if ((serverModelsDraft[key] ?? '') !== (savedServer[key] ?? '')) return true
-      }
-      if ((auditDraft ?? null) !== (gui.auditLogEnabled ?? null)) return true
-      if (autoStartDraft !== (gui.autoStart === true)) return true
-      if ((serverCommandDraft ?? '') !== (gui.serverCommand ?? '')) return true
-      const savedOverrides = gui.providerOverrides ?? {}
-      const overrideKeys = new Set([...Object.keys(overridesDraft), ...Object.keys(savedOverrides)])
-      for (const key of overrideKeys) {
-        const a = overridesDraft[key] ?? {}
-        const b = savedOverrides[key] ?? {}
-        if ((a.baseUrl ?? '') !== (b.baseUrl ?? '') || (a.apiKey ?? '') !== (b.apiKey ?? '') || (a.apiKeyEnv ?? '') !== (b.apiKeyEnv ?? '')) return true
-      }
-    }
-    return Object.keys(draft).some((key) => draft[key] !== saved[key])
-  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, status.data])
+      .catch((error) => {
+        if (!mountedRef.current) return
+        autoStartFailuresRef.current += 1
+        const stopped = autoStartFailuresRef.current >= AUTO_START_MAX_FAILURES
+        setServerError(
+          '自动启动失败：' + String(error?.message ?? error)
+          + (stopped ? ' 已停止自动重试，请处理问题后手动启动。' : ' 稍后将自动重试。'),
+        )
+      })
+      .finally(() => { if (mountedRef.current) setServerBusy(null) })
+  }, [status.data, status.error, serverBusy])
 
   const set = useCallback((key, value) => {
     setDraft((previous) => (previous === null ? previous : { ...previous, [key]: value }))
@@ -465,92 +655,200 @@ function PanelPage() {
   }, [])
 
   const setOverride = useCallback((provider, field, value) => {
-    setOverridesDraft((prev) => ({ ...prev, [provider]: { ...(prev[provider] ?? {}), [field]: value } }))
+    setOverridesDraft((prev) => {
+      const current = { ...(prev[provider] ?? { baseUrl: '', apiKeyEnv: '', apiKey: '', clearApiKey: false }) }
+      if (field === 'apiKey') {
+        // Typing a fresh key cancels a pending clear and means "replace".
+        current.apiKey = value
+        if (value !== '') current.clearApiKey = false
+      } else if (field === 'clearApiKey') {
+        current.clearApiKey = value === true
+        if (value === true) current.apiKey = ''
+      } else {
+        current[field] = value
+      }
+      return { ...prev, [provider]: current }
+    })
     setNotice(null)
     setSaveError(null)
   }, [])
 
   const save = useCallback(() => {
-    if (!draft) return
+    if (!draft) return Promise.resolve(false)
+    const base = baselineRef.current
+    // Snapshot of exactly what is being submitted, so the response can tell
+    // "no edits during flight" apart from "new edits arrived mid-flight".
+    const submitted = { ...liveRef.current }
     setSaving(true)
     setNotice(null)
     setSaveError(null)
     const payloadBody = { ...draft }
     if (cpDraft !== null) payloadBody.controlPlaneUrl = cpDraft
     payloadBody.serverModels = serverModelsDraft
-    payloadBody.auditLogEnabled = auditDraft === true
+    // `null` means "inherit / untouched": only send the audit flag once the
+    // user has actually chosen a boolean, so an unrelated save never flips an
+    // inherited setting to false server-side.
+    if (typeof auditDraft === 'boolean') payloadBody.auditLogEnabled = auditDraft
     payloadBody.autoStart = autoStartDraft
     payloadBody.serverCommand = serverCommandDraft
-    payloadBody.providerOverrides = overridesDraft
-    fetch(CONFIG_URL, {
+    // Per-entry key semantics from the host contract: an omitted or empty
+    // apiKey keeps the stored key, a non-empty one replaces it, and
+    // clearApiKey:true wipes it. `secretConfigured` is display-only and never
+    // sent back.
+    const overridesPayload = {}
+    for (const [provider, entry] of Object.entries(overridesDraft)) {
+      const normalized = {
+        baseUrl: entry.baseUrl ?? '',
+        apiKeyEnv: entry.apiKeyEnv ?? '',
+      }
+      if (entry.clearApiKey === true) normalized.clearApiKey = true
+      else if ((entry.apiKey ?? '') !== '') normalized.apiKey = entry.apiKey
+      overridesPayload[provider] = normalized
+    }
+    payloadBody.providerOverrides = overridesPayload
+    // Optimistic concurrency: the host compares these SHA256 revisions against
+    // its stored state and rejects with 409 when the file changed underneath.
+    payloadBody.configRevision = base?.configRevision ?? null
+    payloadBody.guiRevision = base?.guiRevision ?? null
+    return fetch(CONFIG_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(payloadBody),
     })
       .then(async (response) => {
         const payload = await response.json().catch(() => null)
-        if (!response.ok) throw new Error(payload?.error ?? `HTTP ${response.status}`)
+        if (!response.ok) {
+          const failure = new Error(payload?.error ?? `HTTP ${response.status}`)
+          failure.status = response.status
+          throw failure
+        }
         return payload
       })
       .then((payload) => {
+        if (!mountedRef.current) return false
         setSaving(false)
+        // An in-flight status poll started before the save must not overwrite
+        // the save result when it arrives late.
+        statusGenRef.current += 1
         setStatus({ loading: false, data: payload, error: null })
+        // Explicit baseline reset: what the server just stored is the new
+        // reference point; the epoch bump retriggers `dirty` against it.
+        snapshotBaseline(payload)
+        const live = liveRef.current ?? {}
+        const unchanged = live.draft === submitted.draft
+          && live.cpDraft === submitted.cpDraft
+          && live.serverModelsDraft === submitted.serverModelsDraft
+          && live.auditDraft === submitted.auditDraft
+          && live.autoStartDraft === submitted.autoStartDraft
+          && live.serverCommandDraft === submitted.serverCommandDraft
+          && live.overridesDraft === submitted.overridesDraft
+        let result
+        if (unchanged) {
+          // Nothing typed while saving: reset every draft from the saved state.
+          resetDrafts(payload)
+          result = 'clean'
+        } else {
+          // New input arrived mid-flight: keep it, but retire the submitted key
+          // material — an override entry untouched since submit gets a fresh
+          // draft (empty apiKey / no clear flag) built from the saved state.
+          setOverridesDraft((prev) => {
+            const next = {}
+            const saved = payload?.gui?.providerOverrides
+            for (const [id, entry] of Object.entries(prev)) {
+              next[id] = entry === submitted.overridesDraft?.[id] ? toOverrideDraft(saved?.[id]) : entry
+            }
+            return next
+          })
+          result = 'edited'
+        }
         const saved = Array.isArray(payload?.saved) ? payload.saved.join('、') : ''
         const serverSide = payload?.server?.pendingRestart === true
         setNotice(saved === ''
           ? '已保存。'
           : `已保存（${saved}）。${serverSide ? '服务端设置将在重启服务后生效。' : '下一轮对话生效。'}`)
+        return result
       })
       .catch((error) => {
+        if (!mountedRef.current) return false
         setSaving(false)
-        setSaveError(String(error?.message ?? error))
+        if (error?.status === 409) {
+          // Conflict: the drafts stay untouched, and so does the OLD baseline
+          // (its revision no longer matches the server, so a blind retry keeps
+          // failing) — reloading the baseline requires an explicit discard.
+          setSaveError('保存被拒绝：配置已在其它地方修改（409 冲突）。您的更改已全部保留。注意：本地基线仍是旧版本，直接重试会继续冲突——请先「放弃更改」载入最新基线（当前编辑将被丢弃），之后再重新编辑保存。')
+        } else {
+          setSaveError(String(error?.message ?? error))
+        }
+        return false
       })
-  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft])
+  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, snapshotBaseline, resetDrafts, toOverrideDraft])
 
   const discard = useCallback(() => {
     const data = status.data
     if (!data) return
-    setDraft({ ...data.config.values })
-    setCpDraft(data.gui.controlPlaneUrl)
-    setServerModelsDraft({ ...(data.gui.serverModels ?? {}) })
-    setAuditDraft(data.gui.auditLogEnabled)
-    setAutoStartDraft(data.gui.autoStart === true)
-    setServerCommandDraft(data.gui.serverCommand ?? '')
-    setOverridesDraft({ ...(data.gui.providerOverrides ?? {}) })
+    // Manual discard resets both drafts and baseline to the last server state.
+    snapshotBaseline(data)
+    resetDrafts(data)
     setNotice(null)
     setSaveError(null)
-  }, [status.data])
+  }, [status.data, snapshotBaseline, resetDrafts])
 
   const serverAction = useCallback((action) => {
-    setServerBusy(action)
-    setServerMessage(null)
-    fetch(action === 'restart' ? SERVER_RESTART_URL : SERVER_START_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: '{}',
-    })
-      .then(async (res) => {
-        const payload = await res.json().catch(() => null)
-        if (!res.ok) throw new Error(payload?.error ?? `HTTP ${res.status}`)
-        return payload
+    const run = () => {
+      setServerBusy(action)
+      setServerMessage(null)
+      setServerError(null)
+      fetch(action === 'restart' ? SERVER_RESTART_URL : SERVER_START_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: '{}',
       })
-      .then((payload) => {
-        setStatus({ loading: false, data: payload.status, error: null })
-        setServerMessage(action === 'restart' ? '已按当前设置重启服务。' : (payload.alreadyRunning === true ? '服务已在运行。' : '服务已启动。'))
+        .then(async (res) => {
+          const payload = await res.json().catch(() => null)
+          if (!res.ok) throw new Error(payload?.error ?? `HTTP ${res.status}`)
+          return payload
+        })
+        .then((payload) => {
+          if (!mountedRef.current) return
+          autoStartFailuresRef.current = 0
+          statusGenRef.current += 1
+          setStatus({ loading: false, data: payload.status, error: null })
+          setServerMessage(action === 'restart' ? '已按当前设置重启服务。' : (payload.alreadyRunning === true ? '服务已在运行。' : '服务已启动。'))
+        })
+        .catch((error) => {
+          if (!mountedRef.current) return
+          setServerError((action === 'restart' ? '重启失败：' : '启动失败：') + String(error?.message ?? error))
+          load()
+        })
+        .finally(() => { if (mountedRef.current) setServerBusy(null) })
+    }
+    // Acting with unsaved edits would silently launch the OLD configuration:
+    // persist the draft first, then run against what was actually saved.
+    if (dirtyRef.current) {
+      setServerMessage('检测到未保存的更改，正在先保存…')
+      save().then((result) => {
+        if (!mountedRef.current) return
+        if (result === 'clean') run()
+        else if (result === 'edited') setServerError('操作未执行：保存期间又出现了新的未保存更改，请确认保存或放弃后再执行。')
+        else setServerError('操作未执行：请先解决保存失败的问题。')
       })
-      .catch((error) => {
-        setServerMessage((action === 'restart' ? '重启失败：' : '启动失败：') + String(error?.message ?? error))
-        load()
-      })
-      .finally(() => setServerBusy(null))
-  }, [load])
+      return
+    }
+    run()
+  }, [load, save])
 
   const toggleDefense = useCallback((bankId, enabled) => {
-    setDefense((prev) => ({ ...prev, [bankId]: { ...(prev[bankId] ?? { enabled }), loading: true, error: null } }))
+    const previous = defenseRef.current[bankId] ?? null
+    const generation = defenseGenRef.current
+    setDefense((prev) => ({ ...prev, [bankId]: { ...(prev[bankId] ?? { unknown: false, enabled: !enabled }), loading: true, error: null } }))
+    // No `action` in the body: the host reads the current policy server-side
+    // and only flips this bank's own sensitive_data rule, keeping other rules.
+    // `apiUrl` is the CAS anchor: the host rejects with 409 if the configured
+    // API moved between page load and this click.
     fetch(BANKDEFENSE_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ bankId, enabled }),
+      body: JSON.stringify({ bankId, enabled, apiUrl: apiBaseRef.current ?? '' }),
     })
       .then(async (res) => {
         const payload = await res.json().catch(() => null)
@@ -558,18 +856,28 @@ function PanelPage() {
         return payload
       })
       .then((payload) => {
+        if (!mountedRef.current || generation !== defenseGenRef.current) return
         setDefense((prev) => ({
           ...prev,
           [bankId]: {
             loading: false,
-            enabled: payload?.memoryDefense?.enabled === true,
-            action: payload?.memoryDefense?.rules?.[0]?.action ?? null,
+            unknown: false,
+            enabled: payload?.memoryDefense?.enabled === true && hasSimpleRedactRule(payload?.memoryDefense?.rules),
+            action: null,
             error: null,
           },
         }))
       })
       .catch((error) => {
-        setDefense((prev) => ({ ...prev, [bankId]: { ...(prev[bankId] ?? { enabled: !enabled }), loading: false, error: String(error?.message ?? error) } }))
+        if (!mountedRef.current || generation !== defenseGenRef.current) return
+        const message = String(error?.message ?? error)
+        // Restore the pre-click state so a failed write never looks applied.
+        setDefense((prev) => ({
+          ...prev,
+          [bankId]: previous
+            ? { ...previous, loading: false, error: message }
+            : { loading: false, unknown: true, enabled: false, action: null, error: message },
+        }))
       })
   }, [])
 
@@ -580,6 +888,15 @@ function PanelPage() {
   const server = data ? data.server : null
   const extraKeys = config && Array.isArray(config.extraKeys) ? config.extraKeys : []
   const recordMode = draft && (draft.dynamicBankId === true) ? 'dynamic' : 'fixed'
+  // Service-action gating per the host contract. Hosts predating it have no
+  // `ownership`/`can*` fields — for them keep the old permissive behaviour.
+  const ownership = server ? server.ownership : undefined
+  const legacyHost = server !== null && ownership === undefined
+  const canStartNow = legacyHost ? api?.up !== true : server?.canStart === true
+  // A restart kills whatever listens on the port; without the host's ownership
+  // verdict (legacy host) that could be someone else's process — default deny.
+  const canRestartNow = legacyHost ? false : server?.canRestart === true
+  const operationInFlight = serverBusy !== null || (server !== null && server.operation != null)
 
   /**
    * Providers worth showing in the override editor: everything the DSH
@@ -625,24 +942,43 @@ function PanelPage() {
         </div>
       )}
 
+      {(config?.error || data?.gui?.error) && (
+        <div className={PREFIX + 'errbanner'}>
+          <span>配置读取失败：{config?.error ?? data?.gui?.error}。不会覆盖损坏或不可读的文件，请先在本机修复。</span>
+        </div>
+      )}
+
       {/* ---- service management ------------------------------------------ */}
       {server && (
         <div className={PREFIX + 'card'}>
           <div className={PREFIX + 'cardhead'}>
             <h3 className={PREFIX + 'cardtitle'}>服务管理</h3>
             <div className={PREFIX + 'actions'}>
-              <button type="button" className={PREFIX + 'btn'} disabled={serverBusy !== null || api?.up === true} onClick={() => serverAction('start')}>
-                {serverBusy === 'start' ? '启动中…' : '启动服务'}
+              <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canStartNow} onClick={() => serverAction('start')}>
+                {server.operation === 'start' || serverBusy === 'start' ? '启动中…' : '启动服务'}
               </button>
-              <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={serverBusy !== null} onClick={() => serverAction('restart')}>
-                {serverBusy === 'restart' ? '重启中…' : '重启服务'}
+              <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>
+                {server.operation === 'restart' || serverBusy === 'restart' ? '重启中…' : '重启服务'}
               </button>
             </div>
           </div>
 
+          {server.ownership !== undefined && (
+            <Row label="归属">
+              <Pill tone={server.ownership === 'managed' ? 'ok' : 'warn'}>
+                {server.ownership === 'managed' ? '托管（本插件启动）'
+                  : server.ownership === 'unmanaged' ? '外部进程'
+                    : server.ownership === 'stopped' ? '未运行' : '未知'}
+              </Pill>
+            </Row>
+          )}
+
           <Row label="API">
-            <Pill tone={api?.up === true ? 'ok' : 'bad'}>{api?.up === true ? '运行中' : '未运行'}</Pill>
+            <Pill tone={api?.up === true ? 'ok' : api?.state === 'unknown' ? 'warn' : 'bad'}>
+              {api?.up === true ? '运行中' : api?.state === 'unknown' ? '状态未知' : '未运行'}
+            </Pill>
             <span className={PREFIX + 'muted'}> {api?.url}</span>
+            {api?.state === 'error' && <span className={PREFIX + 'err'}> {api.error}</span>}
           </Row>
           {api?.up === true && (
             <Row label="数据库">
@@ -665,6 +1001,34 @@ function PanelPage() {
                 {server.lastAction.action === 'restart' ? '重启' : '启动'} · {server.lastAction.detail ?? ''}
               </span>
             </Row>
+          )}
+
+          {server.previewError && <div className={PREFIX + 'errbanner'}><span>启动配置解析失败：{server.previewError}</span></div>}
+          {server.ownershipError && <div className={PREFIX + 'errbanner'}><span>服务身份无法核验：{server.ownershipError}</span></div>}
+
+          {server.runningConfig && (
+            <Row label="运行中配置">
+              <span className={PREFIX + 'mono'}>{server.runningConfig.fingerprint ?? '—'}</span>
+              <span className={PREFIX + 'muted'}>
+                {' '}· 启动于 {server.runningConfig.startedAt ?? '—'}
+                {server.runningConfig.auditLogEnabled === true ? ' · 审计日志开'
+                  : server.runningConfig.auditLogEnabled === false ? ' · 审计日志关' : ''}
+              </span>
+            </Row>
+          )}
+          {api?.up === true && server.runtimeConfigKnown === false && (
+            <span className={PREFIX + 'hint'}>
+              运行中服务的实际配置无法确认（可能由外部启动）；「下次启动将应用」仅反映本页保存的值。
+            </span>
+          )}
+          {!canRestartNow && !legacyHost && (
+            <span className={PREFIX + 'hint'}>
+              {ownership === 'unmanaged'
+                ? '端口由外部进程占用：本插件无法重启它，只能等待其退出后再启动托管实例。'
+                : ownership === 'stopped'
+                  ? '服务未运行：重启不可用，请使用「启动服务」。'
+                  : '服务归属未知：为避免误伤其它进程，重启不可用。'}
+            </span>
           )}
 
           <div className={PREFIX + 'field'}>
@@ -693,8 +1057,8 @@ function PanelPage() {
 
           {server.pendingRestart === true && api?.up === true && (
             <div className={PREFIX + 'banner'}>
-              <span>服务端设置已修改，当前运行的进程仍是旧配置。</span>
-              <button type="button" className={PREFIX + 'btn'} disabled={serverBusy !== null} onClick={() => serverAction('restart')}>
+              <span>{server.runtimeConfigKnown === true ? '服务端设置已修改，已确认的启动配置与保存值不同。' : '服务端设置已保存；当前实例配置未知，无法确认是否已生效。'}</span>
+              <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>
                 立即重启生效
               </button>
             </div>
@@ -722,6 +1086,20 @@ function PanelPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {serverError && (
+            <div className={PREFIX + 'errbanner'}>
+              <span>{serverError}</span>
+              <button
+                type="button"
+                className={PREFIX + 'btn'}
+                disabled={serverBusy !== null}
+                onClick={() => { setServerError(null); serverAction('start') }}
+              >
+                重试启动
+              </button>
             </div>
           )}
 
@@ -835,6 +1213,20 @@ function PanelPage() {
               从当前 DSH 环境已注册的 Provider 发现模型，支持下拉点选或手动指定；保存后重启服务生效。
             </span>
 
+            {(modelsState.state === 'error' || modelsState.state === 'unavailable') && !modelsState.loading && (
+              <div className={PREFIX + 'errbanner'}>
+                <span>
+                  无法获取 DSH 模型列表：{modelsState.error ?? (modelsState.errors.map((entry) => entry.error).join('；') || '服务不可用')}
+                  {modelsState.sampledAt ? `（采样于 ${modelsState.sampledAt}）` : ''}
+                </span>
+              </div>
+            )}
+            {modelsState.state === 'partial' && modelsState.errors.length > 0 && (
+              <div className={PREFIX + 'banner'}>
+                <span>部分 Provider 模型获取失败：{modelsState.errors.map((e) => `${e.provider ?? '未知 Provider'}：${e.error}`).join('；')}{modelsState.sampledAt ? `（采样于 ${modelsState.sampledAt}）` : ''}</span>
+              </div>
+            )}
+
             <ModelSelectField
               label="代码库勘察"
               hint="新仓库或大规模更新时进行结构勘察（写入 coding-agent.json 的 surveyModel，下一轮对话生效）。"
@@ -864,7 +1256,8 @@ function PanelPage() {
             </span>
             {overrideProviders.length === 0 && <div className={PREFIX + 'muted'}>暂无需要覆盖的 Provider。</div>}
             {overrideProviders.map((provider) => {
-              const entry = overridesDraft[provider] ?? {}
+              const entry = overridesDraft[provider] ?? { baseUrl: '', apiKeyEnv: '', apiKey: '', clearApiKey: false }
+              const secretConfigured = data?.gui?.providerOverrides?.[provider]?.secretConfigured === true
               return (
                 <div className={PREFIX + 'field'} key={provider}>
                   <span className={PREFIX + 'label mono'}>{provider}</span>
@@ -877,9 +1270,23 @@ function PanelPage() {
                         placeholder="API Key 环境变量名"
                         onChange={(event) => setOverride(provider, 'apiKeyEnv', event.target.value)} />
                       <input className={PREFIX + 'input'} type="password" value={entry.apiKey ?? ''}
-                        placeholder="或直接填 Key"
+                        placeholder={secretConfigured && entry.clearApiKey !== true ? '已保存 Key（输入以替换）' : '或直接填 Key'}
                         onChange={(event) => setOverride(provider, 'apiKey', event.target.value)} />
                     </div>
+                    {secretConfigured && (
+                      entry.clearApiKey === true
+                        ? <span className={PREFIX + 'muted'}>将清除已保存的 Key（保存后生效）。</span>
+                        : (
+                          <div className={PREFIX + 'actions'}>
+                            <span className={PREFIX + 'pill ' + PREFIX + 'ok'}><span className={PREFIX + 'dot'} />已配置 Key</span>
+                            <button type="button" className={PREFIX + 'btn'}
+                              style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                              onClick={() => setOverride(provider, 'clearApiKey', true)}>
+                              清除已存 Key
+                            </button>
+                          </div>
+                        )
+                    )}
                   </div>
                 </div>
               )
@@ -934,9 +1341,9 @@ function PanelPage() {
       {data && (
         <div className={PREFIX + 'card'}>
           <h3 className={PREFIX + 'cardtitle'}>记忆库 <span className={PREFIX + 'muted'}>({banks.length})</span></h3>
-          {banks.length === 0
-            ? <div className={PREFIX + 'muted'}>没有读到记忆库。</div>
-            : (
+          {data.banksError ? (
+            <div className={PREFIX + 'errbanner'}><span>无法读取记忆库列表：{data.banksError}</span></div>
+          ) : banks.length === 0 ? <div className={PREFIX + 'muted'}>没有读到记忆库。</div> : (
               <ul className={PREFIX + 'list'}>
                 {banks.map((bank) => {
                   const state = defense[bank.id] ?? { loading: true, enabled: false }
@@ -944,9 +1351,10 @@ function PanelPage() {
                     <li className={PREFIX + 'item'} key={bank.id}>
                       <span className={PREFIX + 'mono'} style={{ minWidth: 0 }}>{bank.id}</span>
                       <span className={PREFIX + 'count'}>{bank.facts} facts</span>
+                      {state.unknown === true && <span className={PREFIX + 'warn'} style={{ flex: '1 1 100%', order: 3 }}>策略未知</span>}
                       {state.error && <span className={PREFIX + 'err'} style={{ flex: '1 1 100%', order: 3 }}>{state.error}</span>}
                       <label className={PREFIX + 'check'} style={{ flex: '0 0 auto' }}>
-                        <input type="checkbox" disabled={state.loading === true}
+                        <input type="checkbox" disabled={state.loading === true || state.unknown === true || api?.up !== true}
                           checked={state.enabled === true}
                           onChange={(event) => toggleDefense(bank.id, event.target.checked)} />
                         <span className={PREFIX + 'muted'} style={{ fontSize: '12px' }}>脱敏</span>

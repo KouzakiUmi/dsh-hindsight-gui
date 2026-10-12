@@ -1,6 +1,6 @@
 {
   "name": "dsh-hindsight-gui",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "A settings page for the Hindsight memory stack in the DeepSeek Harness sidebar.",
   "type": "module",
   "main": "lib/index.js",
@@ -17,7 +17,8 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "build:client": "node scripts/build-client.mjs"
+    "build:client": "node scripts/build-client.mjs",
+    "test": "node scripts/test-host.mjs && node scripts/test-client.mjs"
   },
   "keywords": [
     "dsh",
