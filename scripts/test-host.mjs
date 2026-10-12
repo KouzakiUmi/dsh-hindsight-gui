@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
+import { pathToFileURL } from 'node:url'
 
 const original = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
 let moduleId = 0
 const SECRET = 'SYNTHETIC_TEST_KEY_NOT_A_REAL_CREDENTIAL'
 
-async function fixture(options = {}) {
+export async function fixture(options = {}) {
   const files = new Map()
   const configPath = '/fixture/coding-agent.json'
   const guiPath = '/fixture/gui.json'
@@ -116,7 +117,7 @@ async function fixture(options = {}) {
   ]
   for (const [before, after] of substitutions) { assert.ok(source.includes(before), 'mock boundary changed'); source = source.replace(before, after) }
   source = 'const process = globalThis.__hostFixture.process;\n'+source+
-    '\nexport { redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
+    '\nexport { redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
   const m = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
   const state = m.createServerState()
   const ctx = {
@@ -153,6 +154,7 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS '+name) 
 const gui = { serverCommand: '/fixture/api.exe' }
 const config = { apiUrl: 'http://127.0.0.1:8888' }
 
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 await test('URL validation, remote management fence and base-path preservation', async () => {
   const {m} = await fixture()
   assert.throws(() => m.sanitizePatch({ apiUrl:'file:///bad' }), /apiUrl/)
@@ -387,4 +389,169 @@ await test('startup summary does not return unknown raw log lines or credential 
   assert.ok(!summary.includes('Authorization'))
   assert.ok(!f.m.redact('https://user:password@example.invalid/?token='+SECRET).includes(SECRET))
 })
+
+await test('embedding settings validate exact fields, URLs and positive dimensions', async () => {
+  const {m}=await fixture()
+  for(const dimensions of [0,-1,1.5,'512',NaN])assert.equal(m.normalizeServerEmbeddings({provider:'openai',dimensions}),null)
+  assert.equal(m.normalizeServerEmbeddings({provider:'unknown'}),null)
+  assert.equal(m.normalizeServerEmbeddings({secretConfigured:true}),null)
+  assert.equal(m.normalizeServerEmbeddings({baseUrl:'https://u:p@example.invalid'}),null)
+  assert.equal(m.normalizeServerEmbeddings({baseUrl:'https://example.invalid/?token=bad'}),null)
+  assert.equal(m.normalizeServerEmbeddings({apiKeyEnv:'bad-name'}),null)
+  assert.equal(m.normalizeServerEmbeddings({localForceCpu:'true'}),null)
+  assert.equal(m.normalizeServerEmbeddings({provider:'onnx',dimensions:1024}).dimensions,1024)
+})
+await test('embedding inherit previews legacy env without migrating it or revealing a key', async () => {
+  const legacy={HINDSIGHT_API_EMBEDDINGS_PROVIDER:'openai',HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:'legacy-model',HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:'http://127.0.0.1:1234/v1',HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:SECRET}
+  const f=await fixture({gui:{serverEnv:legacy}})
+  const saved=f.files.get(f.guiPath)
+  const res=await f.request('status')
+  assert.equal(res.body.gui.serverEmbeddings.provider,'')
+  assert.equal(res.body.gui.serverEmbeddings.secretConfigured,false)
+  assert.equal(res.body.server.embeddingPreview.provider,'openai')
+  assert.equal(res.body.server.embeddingPreview.model,'legacy-model')
+  assert.equal(res.body.server.embeddingPreview.source,'serverEnv')
+  assert.equal(res.body.server.embeddingPreview.secretConfigured,true)
+  assert.ok(!JSON.stringify(res.body).includes(SECRET))
+  assert.equal(f.files.get(f.guiPath),saved)
+  assert.equal(f.writes.length,0)
+})
+await test('embedding explicit OpenAI settings win over passthrough and use exact variables', async () => {
+  const f=await fixture({credentials:{resolve:async ref=>ref==='VECTOR_KEY'?{value:SECRET}:undefined}})
+  const built=await f.m.buildServerEnv({serverEnv:{HINDSIGHT_API_EMBEDDINGS_PROVIDER:'local',HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:'old'},serverEmbeddings:{provider:'openai',model:'new',baseUrl:'https://example.invalid/embed/v1',dimensions:512,apiKeyEnv:'VECTOR_KEY'}},f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_PROVIDER,'openai')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL,'new')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL,'https://example.invalid/embed/v1')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS,'512')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY,SECRET)
+  assert.equal(built.embeddingPreview.model,'new')
+  assert.equal(built.embeddingPreview.dimensions,512)
+  assert.equal(built.embeddingPreview.source,'file')
+  assert.ok(!JSON.stringify(built.embeddingPreview).includes(SECRET))
+})
+await test('embedding local and ONNX settings do not invent unsupported dimension variables', async () => {
+  const f=await fixture()
+  const local=await f.m.buildServerEnv({serverEmbeddings:{provider:'local',model:'BAAI/bge-m3',localForceCpu:true,dimensions:123}},f.ctx)
+  assert.equal(local.env.HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL,'BAAI/bge-m3')
+  assert.equal(local.env.HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU,'true')
+  assert.equal(local.env.HINDSIGHT_API_EMBEDDINGS_LOCAL_DIMENSIONS,undefined)
+  assert.equal(local.env.HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,undefined)
+  const onnx=await f.m.buildServerEnv({serverEmbeddings:{provider:'onnx',model:'intfloat/multilingual-e5-small',dimensions:384},serverEnv:{HINDSIGHT_API_EMBEDDINGS_ONNX_FILE:'onnx/model.onnx'}},f.ctx)
+  assert.equal(onnx.env.HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID,'intfloat/multilingual-e5-small')
+  assert.equal(onnx.env.HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS,'384')
+  assert.equal(onnx.env.HINDSIGHT_API_EMBEDDINGS_ONNX_FILE,'onnx/model.onnx')
+})
+await test('TEI config is only an endpoint; the remote service owns model and dimensions', async () => {
+  const f=await fixture()
+  const built=await f.m.buildServerEnv({serverEmbeddings:{provider:'tei',baseUrl:'http://127.0.0.1:8080',model:'inactive',dimensions:256}},f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_TEI_URL,'http://127.0.0.1:8080')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_TEI_MODEL,undefined)
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_TEI_DIMENSIONS,undefined)
+  assert.equal(built.embeddingPreview.model,null)
+  assert.equal(built.embeddingPreview.dimensions,null)
+})
+await test('embedding explicit missing credential is a preflight error, never a silent fallback', async () => {
+  const f=await fixture({gui:{...gui,serverEnv:{HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:SECRET},serverEmbeddings:{provider:'openai',apiKeyEnv:'MISSING_VECTOR_KEY'}}})
+  const res=await f.request('server/start',{})
+  assert.equal(res.code,400)
+  assert.equal(f.launches.length,0)
+  assert.ok(!JSON.stringify(res.body).includes(SECRET))
+})
+await test('embedding Key keep/replace/clear affects only dedicated settings', async () => {
+  const f=await fixture({gui:{serverEmbeddings:{provider:'openai',apiKey:SECRET},serverEnv:{HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:'SYNTHETIC_LEGACY_KEY'}}})
+  const initial=(await f.request('status')).body
+  const coding=f.files.get(f.configPath)
+  let res=await f.request('config',{guiRevision:initial.gui.revision,serverEmbeddings:{provider:'openai',apiKey:''}})
+  assert.equal(res.code,200)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).serverEmbeddings.apiKey,SECRET)
+  assert.ok(!JSON.stringify(res.body).includes(SECRET))
+  res=await f.request('config',{guiRevision:res.body.gui.revision,serverEmbeddings:{provider:'openai',apiKey:'SYNTHETIC_NEW_VECTOR_KEY'}})
+  assert.equal(res.code,200)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).serverEmbeddings.apiKey,'SYNTHETIC_NEW_VECTOR_KEY')
+  assert.ok(!JSON.stringify(res.body).includes('SYNTHETIC_NEW_VECTOR_KEY'))
+  res=await f.request('config',{guiRevision:res.body.gui.revision,serverEmbeddings:{provider:'openai',clearApiKey:true}})
+  assert.equal(res.code,200)
+  assert.equal(res.body.gui.serverEmbeddings.secretConfigured,false)
+  assert.equal(res.body.server.embeddingPreview.secretConfigured,true)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).serverEnv.HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY,'SYNTHETIC_LEGACY_KEY')
+  assert.equal(f.files.get(f.configPath),coding)
+})
+await test('embedding writes respect CAS and rejected values never modify files', async () => {
+  const f=await fixture()
+  const initial=(await f.request('status')).body
+  const bad=await f.request('config',{guiRevision:initial.gui.revision,serverEmbeddings:{provider:'openai',dimensions:0}})
+  assert.equal(bad.code,400)
+  assert.equal(f.writes.length,0)
+  const stale=await f.request('config',{guiRevision:'stale',serverEmbeddings:{provider:'local',model:'new-model'}})
+  assert.equal(stale.code,409)
+  assert.equal(f.writes.length,0)
+})
+await test('embedding launch snapshot and fingerprint distinguish running from saved settings', async () => {
+  const first={...gui,serverEmbeddings:{provider:'local',model:'old-model'}}
+  const f=await fixture({gui:first})
+  await f.m.startServer(first,config,f.state,f.ctx)
+  assert.equal(f.state.runningConfig.embeddingPreview.model,'old-model')
+  f.files.set(f.guiPath,JSON.stringify({...first,serverEmbeddings:{provider:'local',model:'new-model'}}))
+  const status=await f.m.collect(f.ctx,f.state)
+  assert.equal(status.server.pendingRestart,true)
+  assert.equal(status.server.embeddingPreview.model,'new-model')
+  assert.equal(status.server.runningConfig.embeddingPreview.model,'old-model')
+})
+await test('embedding disabled explicit provider keeps advanced backends unchanged', async () => {
+  const f=await fixture()
+  const built=await f.m.buildServerEnv({serverEnv:{HINDSIGHT_API_EMBEDDINGS_PROVIDER:'cohere',HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL:'custom-model'},serverEmbeddings:{provider:'',model:'inactive-model'}},f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_PROVIDER,'cohere')
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL,'custom-model')
+  assert.equal(built.embeddingPreview.mode,'inherit')
+  assert.equal(built.embeddingPreview.provider,'cohere')
+})
+
+
+await test('embedding provider switch clears old backend parameters without deleting its owned key', async () => {
+  const f=await fixture({gui:{serverEmbeddings:{provider:'openai',model:'cloud-model',baseUrl:'https://example.invalid/v1',dimensions:512,apiKeyEnv:'OLD_VECTOR_REF',apiKey:SECRET}}})
+  const before=(await f.request('status')).body
+  const res=await f.request('config',{guiRevision:before.gui.revision,serverEmbeddings:{provider:'tei',baseUrl:'http://127.0.0.1:8080'}})
+  assert.equal(res.code,200)
+  const stored=JSON.parse(f.files.get(f.guiPath)).serverEmbeddings
+  assert.equal(stored.provider,'tei');assert.equal(stored.model,'');assert.equal(stored.dimensions,null);assert.equal(stored.apiKeyEnv,'')
+  assert.equal(stored.apiKey,SECRET)
+  const onnx=f.m.normalizeServerEmbeddings({provider:'onnx'},stored)
+  assert.equal(onnx.model,'');assert.equal(onnx.baseUrl,'');assert.equal(onnx.dimensions,null)
+  assert.ok(!JSON.stringify(res.body).includes(SECRET))
+})
+await test('embedding missing OpenAI key or TEI URL prevents stopping a healthy managed service', async () => {
+  const f=await fixture({gui})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const child=f.state.child
+  for(const provider of ['openai','tei']) {
+    await assert.rejects(()=>f.m.restartServer({...gui,serverEmbeddings:{provider}},config,f.state,f.ctx))
+    assert.equal(f.state.child,child)
+    assert.equal(f.launches.length,1)
+    assert.ok(!f.commands.some(command=>command.command==='taskkill'))
+  }
+})
+await test('embedding OpenAI key can explicitly inherit the service LLM credential', async () => {
+  const f=await fixture()
+  const built=await f.m.buildServerEnv({serverEnv:{HINDSIGHT_API_LLM_API_KEY:SECRET},serverEmbeddings:{provider:'openai',model:'text-embedding-3-small'}},f.ctx)
+  assert.equal(built.embeddingPreview.mode,'override')
+  assert.equal(built.embeddingPreview.secretConfigured,true)
+  assert.equal(built.embeddingPreview.credentialSource,'继承服务端 LLM 凭据')
+  assert.ok(!JSON.stringify(built.embeddingPreview).includes(SECRET))
+})
+
+
+await test('embedding inherited endpoint query remains unchanged while sensitive query values are redacted', async () => {
+  const url='https://example.invalid/v1?api-version=2026-01-01&api_key=SYNTHETIC_QUERY_CREDENTIAL'
+  const f=await fixture({gui:{serverEnv:{HINDSIGHT_API_EMBEDDINGS_PROVIDER:'openai',HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:url,HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:SECRET}}})
+  const built=await f.m.buildServerEnv(JSON.parse(f.files.get(f.guiPath)),f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL,url)
+  assert.equal(built.embeddingPreview.mode,'inherit')
+  const status=(await f.request('status')).body
+  assert.ok(status.server.embeddingPreview.baseUrl.includes('api-version=2026-01-01'))
+  assert.ok(!JSON.stringify(status).includes('SYNTHETIC_QUERY_CREDENTIAL'))
+  assert.equal(f.m.normalizeServerEmbeddings({provider:'openai',baseUrl:url}),null,'dedicated form remains stricter')
+})
+
 console.log(`Host offline regressions: ${passed} passed; no real service, credential, network or file-write operations.`)
+
+}

@@ -43,6 +43,14 @@ const PREFIX = 'dsh-hsp-'
 
 /** Log levels the integration accepts. */
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error']
+const TABS = [
+  { id: 'overview', label: '概览' },
+  { id: 'memory', label: '记忆与连接' },
+  { id: 'models', label: '模型' },
+  { id: 'security', label: '安全' },
+  { id: 'advanced', label: '高级' },
+]
+const EMPTY_EMBEDDINGS = { provider: '', model: '', baseUrl: '', dimensions: null, apiKeyEnv: '', localForceCpu: null, secretConfigured: false }
 
 /** Server model scopes, with the labels and hints shown on the page. */
 const SERVER_SCOPES = [
@@ -79,10 +87,18 @@ function hasSimpleRedactRule(rules) {
     && Object.keys(rule).length === 2)
 }
 
+// The always-visible migration notice below covers these warnings once; do not
+// hide independent credential, dependency or configuration errors from Host.
+function isMigrationWarning(warning) {
+  return typeof warning === 'string'
+    && /重建|迁移|重新索引|re-?index|rebuild|migrat/i.test(warning)
+    && /向量|索引|维度|模型|vector|embedding|index|dimension|model/i.test(warning)
+}
+
 const CSS = [
   /* ---- shell: fluid, no fixed width ------------------------------------- */
   '.' + PREFIX + 'root{box-sizing:border-box;height:100%;min-height:0;overflow:auto;',
-  'display:flex;flex-direction:column;gap:14px;padding:18px 22px 44px;width:100%;',
+  'display:flex;flex-direction:column;gap:14px;padding:18px 22px 44px;width:100%;isolation:isolate;',
   'color:var(--dsw-alias-label-primary,#1a1a1a);font-size:13px;line-height:20px;color-scheme:light dark;}',
   '.' + PREFIX + 'head{display:flex;flex-direction:column;gap:4px;}',
   '.' + PREFIX + 'h{margin:0;font-size:18px;line-height:26px;font-weight:650;}',
@@ -148,8 +164,20 @@ const CSS = [
   '.' + PREFIX + 'details{border:.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:10px;',
   'padding:11px 16px;font-size:12.5px;}',
   '.' + PREFIX + 'summary{cursor:pointer;color:var(--dsw-alias-label-secondary,#555);}',
+  '.' + PREFIX + 'tabs{position:sticky;top:0;z-index:2;display:flex;gap:4px;overflow-x:auto;flex:0 0 auto;',
+  'border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base,#fff));}',
+  '.' + PREFIX + 'fold{min-width:0;}',
+  '.' + PREFIX + 'fold>summary{cursor:pointer;font-size:13.5px;font-weight:650;}',
+  '.' + PREFIX + 'foldbody{display:flex;flex-direction:column;gap:12px;margin-top:12px;}',
+  '.' + PREFIX + 'tab{flex:0 0 auto;border:0;border-bottom:2px solid transparent;padding:9px 13px;background:transparent;color:var(--dsw-alias-label-secondary,#555);font:inherit;cursor:pointer;white-space:nowrap;}',
+  '.' + PREFIX + 'tab[aria-selected="true"]{color:var(--dsw-alias-brand-primary,#3b82f6);border-bottom-color:currentColor;font-weight:650;}',
+  '.' + PREFIX + 'tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px;}',
+  '.' + PREFIX + 'tabpanel{display:flex;flex-direction:column;gap:14px;min-width:0;}',
+  '.' + PREFIX + 'tabpanel[hidden]{display:none;}',
+  '.' + PREFIX + 'savebar{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base,#fff));}',
   /* ---- dark theme -------------------------------------------------------- */
   'body[data-ds-dark-theme] .' + PREFIX + 'root{color-scheme:dark;}',
+  'body[data-ds-dark-theme] .' + PREFIX + 'tabs{background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base,#212123));border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'card{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));background-color:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'input,body[data-ds-dark-theme] .' + PREFIX + 'select{color-scheme:dark;background-color:var(--dsw-alias-bg-layer-2,#212123);color:var(--dsw-alias-label-primary,#f9fafb);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.18));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'select option,body[data-ds-dark-theme] .' + PREFIX + 'select optgroup{background-color:var(--dsw-alias-bg-layer-2,#212123);color:var(--dsw-alias-label-primary,#f9fafb);}',
@@ -157,15 +185,20 @@ const CSS = [
   'body[data-ds-dark-theme] .' + PREFIX + 'btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-active,rgba(255,255,255,.12));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'item{border-bottom-color:var(--dsw-alias-border-l3,rgba(255,255,255,.07));}',
   'body[data-ds-dark-theme] .' + PREFIX + 'details{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));}',
+  'body[data-ds-dark-theme] .' + PREFIX + 'ok{color:#4ade80;background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.3);}',
+  'body[data-ds-dark-theme] .' + PREFIX + 'bad{color:#fca5a5;background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.3);}',
   'body[data-ds-dark-theme] .' + PREFIX + 'warn{color:#fbbf24;background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.3);}',
   'body[data-ds-dark-theme] .' + PREFIX + 'banner{color:#fbbf24;background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.3);}',
   'body[data-ds-dark-theme] .' + PREFIX + 'errbanner{color:#f87171;background:rgba(220,38,38,.14);border-color:rgba(220,38,38,.4);}',
   '@media (prefers-color-scheme:dark){',
   ' .' + PREFIX + 'root{color-scheme:dark;}',
+  ' .' + PREFIX + 'tabs{background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base,#212123));border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));}',
   ' .' + PREFIX + 'input,.' + PREFIX + 'select{color-scheme:dark;background-color:var(--dsw-alias-bg-layer-2,#212123);color:var(--dsw-alias-label-primary,#f9fafb);border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.18));}',
   ' .' + PREFIX + 'select option,.' + PREFIX + 'select optgroup{background-color:var(--dsw-alias-bg-layer-2,#212123);color:var(--dsw-alias-label-primary,#f9fafb);}',
   ' .' + PREFIX + 'card{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.12));background-color:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02));}',
   ' .' + PREFIX + 'btn{border-color:var(--dsw-alias-border-l3,rgba(255,255,255,.14));background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));}',
+  ' .' + PREFIX + 'ok{color:#4ade80;background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.3);}',
+  ' .' + PREFIX + 'bad{color:#fca5a5;background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.3);}',
   ' .' + PREFIX + 'warn{color:#fbbf24;background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.3);}',
   ' .' + PREFIX + 'banner{color:#fbbf24;background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.3);}',
   ' .' + PREFIX + 'errbanner{color:#f87171;background:rgba(220,38,38,.14);border-color:rgba(220,38,38,.4);}',
@@ -325,6 +358,14 @@ function PanelPage() {
   // Override drafts never carry the stored key: `apiKey` holds only what the
   // user just typed (empty = keep the stored key), `clearApiKey` asks to wipe.
   const [overridesDraft, setOverridesDraft] = useState({})
+  const [embeddingsDraft, setEmbeddingsDraft] = useState({ ...EMPTY_EMBEDDINGS, apiKey: '', clearApiKey: false })
+  // Each provider owns its own unsubmitted form; switching must not carry an
+  // OpenAI URL/model/dimensions into a different backend. Never cache a stored key.
+  const embeddingsCacheRef = useRef({})
+  const [activeTab, setActiveTab] = useState('overview')
+  const [chatExpanded, setChatExpanded] = useState(true)
+  const [overridesExpanded, setOverridesExpanded] = useState(false)
+  const tabRefs = useRef({})
   // Model discovery carries its own state machine: ok / partial / error /
   // unavailable — an empty provider list is NOT success when state says error.
   const [modelsState, setModelsState] = useState({ loading: false, providers: [], errors: [], state: null, sampledAt: null, error: null })
@@ -448,6 +489,18 @@ function PanelPage() {
     secretConfigured: entry?.secretConfigured === true,
   }), [])
 
+  const toEmbeddingsDraft = useCallback((entry) => ({
+    provider: entry?.provider ?? '',
+    model: entry?.model ?? '',
+    baseUrl: entry?.baseUrl ?? '',
+    dimensions: entry?.dimensions ?? null,
+    apiKeyEnv: entry?.apiKeyEnv ?? '',
+    localForceCpu: entry?.localForceCpu ?? null,
+    secretConfigured: entry?.secretConfigured === true,
+    apiKey: '',
+    clearApiKey: false,
+  }), [])
+
   /** Snapshot the server state the drafts were seeded from (the CAS baseline). */
   const snapshotBaseline = useCallback((data) => {
     const overrides = {}
@@ -463,11 +516,12 @@ function PanelPage() {
       autoStart: data?.gui?.autoStart === true,
       serverCommand: data?.gui?.serverCommand ?? '',
       providerOverrides: overrides,
+      serverEmbeddings: toEmbeddingsDraft(data?.gui?.serverEmbeddings ?? EMPTY_EMBEDDINGS),
       configRevision: data?.config?.revision ?? null,
       guiRevision: data?.gui?.revision ?? null,
     }
     setBaselineEpoch((epoch) => epoch + 1)
-  }, [toOverrideDraft])
+  }, [toOverrideDraft, toEmbeddingsDraft])
 
   /** Reset every draft from a status document. */
   const resetDrafts = useCallback((data) => {
@@ -483,7 +537,25 @@ function PanelPage() {
     setAutoStartDraft(data?.gui?.autoStart === true)
     setServerCommandDraft(data?.gui?.serverCommand ?? '')
     setOverridesDraft(overrides)
-  }, [toOverrideDraft])
+    const embedding = toEmbeddingsDraft(data?.gui?.serverEmbeddings ?? EMPTY_EMBEDDINGS)
+    embeddingsCacheRef.current = { [embedding.provider]: embedding }
+    setEmbeddingsDraft(embedding)
+  }, [toOverrideDraft, toEmbeddingsDraft])
+
+  const inactiveEmbeddingsDirty = (() => {
+    const base = baselineRef.current?.serverEmbeddings
+    if (!base) return false
+    return Object.entries(embeddingsCacheRef.current).some(([provider, entry]) => {
+      if (provider === embeddingsDraft.provider) return false
+      const original = provider === base.provider ? base : toEmbeddingsDraft({ provider })
+      const fields = provider === 'openai' ? ['model', 'baseUrl', 'dimensions', 'apiKeyEnv']
+        : provider === 'onnx' ? ['model', 'dimensions']
+          : provider === 'local' ? ['model', 'localForceCpu']
+            : provider === 'tei' ? ['baseUrl'] : []
+      return fields.some((field) => String(entry[field] ?? '') !== String(original[field] ?? ''))
+        || (provider === 'openai' && (entry.apiKey !== '' || (entry.clearApiKey && base.secretConfigured)))
+    })
+  })()
 
   const dirty = (() => {
     const base = baselineRef.current
@@ -496,6 +568,20 @@ function PanelPage() {
     if ((auditDraft ?? null) !== base.auditLogEnabled) return true
     if (autoStartDraft !== base.autoStart) return true
     if ((serverCommandDraft ?? '') !== base.serverCommand) return true
+    const emb = base.serverEmbeddings
+    if (embeddingsDraft.provider !== emb.provider) return true
+    const activeFields = embeddingsDraft.provider === 'openai' ? ['model', 'baseUrl', 'dimensions', 'apiKeyEnv']
+      : embeddingsDraft.provider === 'onnx' ? ['model', 'dimensions']
+        : embeddingsDraft.provider === 'local' ? ['model', 'localForceCpu']
+          : embeddingsDraft.provider === 'tei' ? ['baseUrl'] : []
+    for (const field of activeFields) {
+      if (String(embeddingsDraft[field] ?? '') !== String(emb[field] ?? '')) return true
+    }
+    if (embeddingsDraft.provider === 'openai') {
+      if (embeddingsDraft.apiKey !== '') return true
+      if (embeddingsDraft.clearApiKey && emb.secretConfigured) return true
+    }
+    if (inactiveEmbeddingsDirty) return true
     const overrideKeys = new Set([...Object.keys(overridesDraft), ...Object.keys(base.providerOverrides)])
     for (const key of overrideKeys) {
       const a = overridesDraft[key] ?? {}
@@ -512,7 +598,7 @@ function PanelPage() {
   const liveRef = useRef(null)
   useEffect(() => {
     dirtyRef.current = dirty
-    liveRef.current = { draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft }
+    liveRef.current = { draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, embeddingsDraft }
   })
 
   /**
@@ -673,12 +759,33 @@ function PanelPage() {
     setSaveError(null)
   }, [])
 
+  const setEmbeddings = useCallback((field, value) => {
+    if (field === 'provider') {
+      if (value === embeddingsDraft.provider) return
+      const cache = { ...embeddingsCacheRef.current, [embeddingsDraft.provider]: embeddingsDraft }
+      const saved = baselineRef.current?.serverEmbeddings
+      const next = cache[value] ?? toEmbeddingsDraft(
+        saved?.provider === value ? saved : { provider: value, secretConfigured: saved?.secretConfigured === true },
+      )
+      embeddingsCacheRef.current = cache
+      setEmbeddingsDraft(next)
+    } else {
+      setEmbeddingsDraft((prev) => ({
+        ...prev, [field]: value,
+        ...(field === 'apiKey' && value !== '' ? { clearApiKey: false } : {}),
+        ...(field === 'clearApiKey' && value === true ? { apiKey: '' } : {}),
+      }))
+    }
+    setNotice(null)
+    setSaveError(null)
+  }, [embeddingsDraft, toEmbeddingsDraft])
+
   const save = useCallback(() => {
     if (!draft) return Promise.resolve(false)
     const base = baselineRef.current
     // Snapshot of exactly what is being submitted, so the response can tell
     // "no edits during flight" apart from "new edits arrived mid-flight".
-    const submitted = { ...liveRef.current }
+    const submitted = { ...liveRef.current, embeddingsCache: embeddingsCacheRef.current }
     setSaving(true)
     setNotice(null)
     setSaveError(null)
@@ -706,6 +813,37 @@ function PanelPage() {
       overridesPayload[provider] = normalized
     }
     payloadBody.providerOverrides = overridesPayload
+    const embBase = base?.serverEmbeddings ?? EMPTY_EMBEDDINGS
+    const embFields = embeddingsDraft.provider === 'openai' ? ['model', 'baseUrl', 'dimensions', 'apiKeyEnv']
+      : embeddingsDraft.provider === 'onnx' ? ['model', 'dimensions']
+        : embeddingsDraft.provider === 'local' ? ['model', 'localForceCpu']
+          : embeddingsDraft.provider === 'tei' ? ['baseUrl'] : []
+    const embChanged = embeddingsDraft.provider !== embBase.provider
+      || embFields.some((field) => String(embeddingsDraft[field] ?? '') !== String(embBase[field] ?? ''))
+      || (embeddingsDraft.provider === 'openai'
+        && (embeddingsDraft.apiKey !== '' || (embeddingsDraft.clearApiKey && embBase.secretConfigured)))
+    if (inactiveEmbeddingsDirty && !embChanged) {
+      setSaving(false)
+      setSaveError('其它向量 Provider 有未提交的草稿，请切回对应 Provider 保存，或放弃更改。')
+      return Promise.resolve(false)
+    }
+    if (embChanged) {
+      const dimensions = embeddingsDraft.dimensions
+      if (embFields.includes('dimensions') && dimensions !== null && dimensions !== ''
+        && (!Number.isSafeInteger(Number(dimensions)) || Number(dimensions) <= 0)) {
+        setSaving(false)
+        setSaveError('向量维度必须是正整数或留空。')
+        return Promise.resolve(false)
+      }
+      const settings = { provider: embeddingsDraft.provider }
+      for (const field of embFields) settings[field] = field === 'dimensions'
+        ? (dimensions === null || dimensions === '' ? null : Number(dimensions)) : embeddingsDraft[field]
+      if (embeddingsDraft.provider === 'openai') {
+        if (embeddingsDraft.clearApiKey) settings.clearApiKey = true
+        else if (embeddingsDraft.apiKey !== '') settings.apiKey = embeddingsDraft.apiKey
+      }
+      payloadBody.serverEmbeddings = settings
+    }
     // Optimistic concurrency: the host compares these SHA256 revisions against
     // its stored state and rejects with 409 when the file changed underneath.
     payloadBody.configRevision = base?.configRevision ?? null
@@ -742,6 +880,8 @@ function PanelPage() {
           && live.autoStartDraft === submitted.autoStartDraft
           && live.serverCommandDraft === submitted.serverCommandDraft
           && live.overridesDraft === submitted.overridesDraft
+          && live.embeddingsDraft === submitted.embeddingsDraft
+          && embeddingsCacheRef.current === submitted.embeddingsCache
         let result
         if (unchanged) {
           // Nothing typed while saving: reset every draft from the saved state.
@@ -759,6 +899,19 @@ function PanelPage() {
             }
             return next
           })
+          const savedEmbedding = toEmbeddingsDraft(payload?.gui?.serverEmbeddings ?? EMPTY_EMBEDDINGS)
+          const submittedProvider = submitted.embeddingsDraft?.provider
+          const cache = { ...embeddingsCacheRef.current }
+          if (cache[submittedProvider] === submitted.embeddingsDraft) {
+            // A provider switch put the submitted draft (possibly containing a
+            // fresh Key) in the cache. Retire only that exact snapshot; newer
+            // input for the same provider must survive the in-flight save.
+            cache[submittedProvider] = savedEmbedding.provider === submittedProvider
+              ? savedEmbedding
+              : toEmbeddingsDraft({ provider: submittedProvider, secretConfigured: savedEmbedding.secretConfigured })
+          }
+          embeddingsCacheRef.current = cache
+          setEmbeddingsDraft((prev) => prev === submitted.embeddingsDraft ? savedEmbedding : prev)
           result = 'edited'
         }
         const saved = Array.isArray(payload?.saved) ? payload.saved.join('、') : ''
@@ -781,7 +934,7 @@ function PanelPage() {
         }
         return false
       })
-  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, snapshotBaseline, resetDrafts, toOverrideDraft])
+  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, embeddingsDraft, inactiveEmbeddingsDirty, snapshotBaseline, resetDrafts, toOverrideDraft, toEmbeddingsDraft])
 
   const discard = useCallback(() => {
     const data = status.data
@@ -922,13 +1075,44 @@ function PanelPage() {
     return ids
   }, [modelsState.providers, serverModelsDraft, overridesDraft])
 
+  const embeddingPreview = server?.embeddingPreview
+  const runningEmbedding = server?.runningConfig?.embeddingPreview
+  const selectTab = (id) => setActiveTab(id)
+  const tabKeyDown = (event, index) => {
+    let next = index
+    if (event.key === 'ArrowRight') next = (index + 1) % TABS.length
+    else if (event.key === 'ArrowLeft') next = (index - 1 + TABS.length) % TABS.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = TABS.length - 1
+    else return
+    event.preventDefault()
+    selectTab(TABS[next].id)
+    tabRefs.current[TABS[next].id]?.focus()
+  }
+
   return (
     <div className={PREFIX + 'root'}>
       <div className={PREFIX + 'head'}>
         <h2 className={PREFIX + 'h'}>Hindsight</h2>
         <p className={PREFIX + 'sub'}>
-          记忆设置保存后下一轮对话生效；服务端设置（模型路由、审计日志）在启动/重启服务时应用。
+          记忆设置下一轮对话生效；服务端设置仅在下次启动/重启时应用，不会自动重启。
         </p>
+        <div className={PREFIX + 'actions'}>
+          <Pill tone={api?.up === true ? 'ok' : api?.state === 'unknown' ? 'warn' : 'bad'}>API {api?.up === true ? '运行中' : api?.state === 'unknown' ? '状态未知' : '未运行'}</Pill>
+          <Pill tone={cp?.up === true ? 'ok' : 'warn'}>控制台 {cp?.up === true ? '可用' : '不可用'}</Pill>
+          {server?.pendingRestart === true && <Pill tone="warn">待下次启动应用</Pill>}
+          {dirty && <span className={PREFIX + 'muted'}>有未保存的更改（跨分类保留）</span>}
+        </div>
+      </div>
+      <div className={PREFIX + 'tabs'} role="tablist" aria-label="Hindsight 设置分类">
+        {TABS.map((tab, index) => <button key={tab.id} type="button" role="tab"
+          id={'dsh-hsp-tab-' + tab.id} aria-controls={'dsh-hsp-panel-' + tab.id}
+          aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
+          ref={(element) => { tabRefs.current[tab.id] = element }}
+          className={PREFIX + 'tab'} onClick={() => selectTab(tab.id)}
+          onKeyDown={(event) => tabKeyDown(event, index)}>
+          {tab.label}{dirty && activeTab !== tab.id ? ' ·' : ''}
+        </button>)}
       </div>
 
       {status.loading && draft === null && <div className={PREFIX + 'muted'}>读取中…</div>}
@@ -948,6 +1132,7 @@ function PanelPage() {
         </div>
       )}
 
+      <section id="dsh-hsp-panel-overview" role="tabpanel" aria-labelledby="dsh-hsp-tab-overview" hidden={activeTab !== 'overview'} className={PREFIX + 'tabpanel'}>
       {/* ---- service management ------------------------------------------ */}
       {server && (
         <div className={PREFIX + 'card'}>
@@ -1114,6 +1299,8 @@ function PanelPage() {
         </div>
       )}
 
+      </section>
+      <section id="dsh-hsp-panel-memory" role="tabpanel" aria-labelledby="dsh-hsp-tab-memory" hidden={activeTab !== 'memory'} className={PREFIX + 'tabpanel'}>
       {draft !== null && (
         <>
           <div className={PREFIX + 'card'}>
@@ -1196,9 +1383,18 @@ function PanelPage() {
             </div>
           </div>
 
+        </>
+      )}
+      </section>
+      <section id="dsh-hsp-panel-models" role="tabpanel" aria-labelledby="dsh-hsp-tab-models" hidden={activeTab !== 'models'} className={PREFIX + 'tabpanel'}>
+      {draft !== null && (
+        <>
           <div className={PREFIX + 'card'}>
+            <details className={PREFIX + 'fold'} open={chatExpanded}>
+              <summary onClick={(event) => { event.preventDefault(); setChatExpanded((value) => !value) }}>功能模型调用</summary>
+            <div className={PREFIX + 'foldbody'}>
             <div className={PREFIX + 'cardhead'}>
-              <h3 className={PREFIX + 'cardtitle'}>功能模型调用</h3>
+              <span className={PREFIX + 'hint'}>DSH 聊天模型路由</span>
               <button
                 type="button"
                 className={PREFIX + 'btn'}
@@ -1241,16 +1437,107 @@ function PanelPage() {
                 key={scope.key}
                 label={scope.label}
                 hint={scope.hint + `（写入 serverModels.${scope.key}）`}
-                defaultValue={scope.key === 'reflect' ? 'MiniMax-M3' : 'deepseek-flash'}
+                defaultValue="继承启动环境/后端默认，型号未确认"
                 value={serverModelsDraft[scope.key] ?? ''}
                 onChange={(val) => setServerModel(scope.key, val)}
                 providers={modelsState.providers}
               />
             ))}
+            </div>
+            </details>
           </div>
 
           <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>Provider 覆盖</h3>
+            <h3 className={PREFIX + 'cardtitle'}>向量模型</h3>
+            <span className={PREFIX + 'hint'}>此处是 Hindsight 向量化专用模型，不属于 DSH 聊天模型列表。预览反映已保存设置而非当前草稿；所有保存仅影响下次启动。本页不会迁移索引、下载模型或重启服务。</span>
+            <div className={PREFIX + 'banner'}>更换向量模型或维度可能需要重建/迁移已有向量，操作前请自行核对存量数据。</div>
+            {embeddingPreview ? <>
+              <Row label="已保存预览">
+                <span className={embeddingPreview.mode === 'error' ? PREFIX + 'err' : PREFIX + 'mono'}>
+                  {embeddingPreview.mode === 'error' ? '配置错误' : embeddingPreview.provider ?? '未知 Provider'}
+                  {embeddingPreview.model ? ` · ${embeddingPreview.model}` : ''}
+                  {embeddingPreview.baseUrl ? ` · ${embeddingPreview.baseUrl}` : ''}
+                  {embeddingPreview.dimensions != null ? ` · ${embeddingPreview.dimensions} 维` : ''}
+                </span>
+              </Row>
+              <Row label="配置来源">{embeddingPreview.source ?? '未知'} · {embeddingPreview.mode ?? '未知'} · 凭据来源 {embeddingPreview.credentialSource ?? '未知'} · {embeddingPreview.secretConfigured ? '下次启动凭据已配置（未验证有效性）' : '下次启动凭据未确认配置'}</Row>
+              {embeddingPreview.note && <span className={PREFIX + 'hint'}>{embeddingPreview.note}</span>}
+              {Array.isArray(embeddingPreview.warnings) && embeddingPreview.warnings
+                .filter((warning) => !isMigrationWarning(warning))
+                .map((warning, i) => <div key={i} className={PREFIX + 'banner'}>{warning}</div>)}
+            </> : <div className={PREFIX + 'banner'}>下次启动向量配置未知，无法确认已保存设置的解析结果。</div>}
+            <Row label="当前运行">{runningEmbedding
+              ? `${runningEmbedding.provider ?? '未知'}${runningEmbedding.model ? ` · ${runningEmbedding.model}` : ''}（本插件确认的启动快照）`
+              : '未知（无本插件确认的启动快照；不能推断正在使用下次启动配置）'}</Row>
+            <div className={PREFIX + 'field'}>
+              <span className={PREFIX + 'label'}>Provider</span>
+              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'} value={embeddingsDraft.provider}
+                onChange={(event) => setEmbeddings('provider', event.target.value)}>
+                <option value="">继承环境 / 既有服务配置</option>
+                <option value="local">local（本地）</option>
+                <option value="openai">openai（含 LM Studio / OpenAI 兼容）</option>
+                <option value="onnx">onnx</option>
+                <option value="tei">tei（远端推理服务）</option>
+                {!['', 'local', 'openai', 'onnx', 'tei'].includes(embeddingsDraft.provider) &&
+                  <option value={embeddingsDraft.provider}>未知 Provider：{embeddingsDraft.provider}</option>}
+              </select><span className={PREFIX + 'hint'}>留空保持继承；不会自动迁移旧 serverEnv，既有值仅在下次启动预览中显示。</span></div>
+            </div>
+            {['local', 'openai', 'onnx'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
+              <span className={PREFIX + 'label'}>{embeddingsDraft.provider === 'onnx' ? 'ONNX 模型 ID' : '模型'}</span>
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" value={embeddingsDraft.model}
+                placeholder={embeddingsDraft.provider === 'onnx' ? 'ONNX 模型 ID' : '向量模型名称'}
+                onChange={(event) => setEmbeddings('model', event.target.value)} />
+                {embeddingsDraft.provider !== 'openai' && <span className={PREFIX + 'hint'}>本地依赖及模型需自行准备；不会自动安装或信任远端代码。</span>}
+              </div>
+            </div>}
+            {['openai', 'tei'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
+              <span className={PREFIX + 'label'}>Base URL</span>
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" value={embeddingsDraft.baseUrl}
+                placeholder={embeddingsDraft.provider === 'tei' ? 'TEI 服务地址' : '兼容 OpenAI 的 API 地址'}
+                onChange={(event) => setEmbeddings('baseUrl', event.target.value)} />
+                {embeddingsDraft.provider === 'tei' && <span className={PREFIX + 'hint'}>TEI 模型由远端服务决定，本页不发送模型字段。</span>}
+              </div>
+            </div>}
+            {['openai', 'onnx'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
+              <span className={PREFIX + 'label'}>维度（可选）</span>
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="number" min="1" step="1"
+                value={embeddingsDraft.dimensions ?? ''} onChange={(event) => setEmbeddings('dimensions', event.target.value)} />
+                <span className={PREFIX + 'hint'}>留空继承既有维度配置，否则由模型/服务决定；设置后需核对现有向量索引。</span>
+              </div>
+            </div>}
+            {embeddingsDraft.provider === 'local' && <div className={PREFIX + 'field'}>
+              <span className={PREFIX + 'label'}>强制 CPU</span>
+              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'}
+                value={embeddingsDraft.localForceCpu === null ? '' : String(embeddingsDraft.localForceCpu)}
+                onChange={(event) => setEmbeddings('localForceCpu', event.target.value === '' ? null : event.target.value === 'true')}>
+                <option value="">默认（不指定）</option><option value="true">是</option><option value="false">否</option>
+              </select></div>
+            </div>}
+            {embeddingsDraft.provider === 'openai' && <>
+              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>Key 环境变量</span>
+                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" value={embeddingsDraft.apiKeyEnv}
+                  placeholder="API Key 环境变量名" onChange={(event) => setEmbeddings('apiKeyEnv', event.target.value)} /></div>
+              </div>
+              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>替换密钥</span>
+                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="password" value={embeddingsDraft.apiKey}
+                  placeholder="向量 Key（留空保留已存值）" onChange={(event) => setEmbeddings('apiKey', event.target.value)} />
+                  <span className={PREFIX + 'hint'}>此 Hindsight 版本需要非空 Key；本地免鉴权端点也需由您明确填写非敏感占位值，或继承已有 Key。本页不会自动生成。</span>
+                  {embeddingsDraft.secretConfigured && (embeddingsDraft.clearApiKey
+                    ? <span className={PREFIX + 'hint'}>将清除本页已保存 Key；环境凭据仍可能被继承。</span>
+                    : <div className={PREFIX + 'actions'}><span className={PREFIX + 'hint'}>已配置本页 Key（不显示内容）</span>
+                        <button type="button" className={PREFIX + 'btn'} onClick={() => setEmbeddings('clearApiKey', true)}>清除向量 Key</button>
+                      </div>)}
+                </div>
+              </div>
+            </>}
+            {embeddingsDraft.provider && !['local', 'openai', 'onnx', 'tei'].includes(embeddingsDraft.provider) &&
+              <div className={PREFIX + 'errbanner'}><span>未知向量 Provider：不能推断其配置或生效状态，请切换到受支持的类型。</span></div>}
+          </div>
+
+          <div className={PREFIX + 'card'}>
+            <details className={PREFIX + 'fold'} open={overridesExpanded}>
+              <summary onClick={(event) => { event.preventDefault(); setOverridesExpanded((value) => !value) }}>Provider 覆盖</summary>
+            <div className={PREFIX + 'foldbody'}>
             <span className={PREFIX + 'hint'}>
               为非内置 Provider 填写 openai 兼容端点与凭据；留空表示用环境变量（&lt;PROVIDER&gt;_API_KEY）或 DSH 凭据库。
             </span>
@@ -1291,8 +1578,16 @@ function PanelPage() {
                 </div>
               )
             })}
+            </div>
+            </details>
           </div>
 
+        </>
+      )}
+      </section>
+      <section id="dsh-hsp-panel-security" role="tabpanel" aria-labelledby="dsh-hsp-tab-security" hidden={activeTab !== 'security'} className={PREFIX + 'tabpanel'}>
+      {draft !== null && (
+        <>
           <div className={PREFIX + 'card'}>
             <h3 className={PREFIX + 'cardtitle'}>安全</h3>
             <div className={PREFIX + 'field'}>
@@ -1310,31 +1605,7 @@ function PanelPage() {
             </div>
           </div>
 
-          <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>其他</h3>
-            <label className={PREFIX + 'check'}>
-              <input type="checkbox" checked={draft.autoUpdate === true}
-                onChange={(event) => set('autoUpdate', event.target.checked)} />
-              <span>自动更新（autoUpdate）</span>
-            </label>
-            <label className={PREFIX + 'check'}>
-              <input type="checkbox" checked={draft.codebaseSurvey === true}
-                onChange={(event) => set('codebaseSurvey', event.target.checked)} />
-              <span>代码库勘察（codebaseSurvey）</span>
-            </label>
-          </div>
 
-          <div className={PREFIX + 'actions'}>
-            <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={!dirty || saving} onClick={save}>
-              {saving ? '保存中…' : '保存'}
-            </button>
-            <button type="button" className={PREFIX + 'btn'} disabled={!dirty || saving} onClick={discard}>
-              放弃更改
-            </button>
-            {dirty && !saving && <span className={PREFIX + 'muted'}>有未保存的更改</span>}
-            {notice && <span className={PREFIX + 'notice'}>{notice}</span>}
-            {saveError && <span className={PREFIX + 'err'}>保存失败：{saveError}</span>}
-          </div>
         </>
       )}
 
@@ -1370,12 +1641,37 @@ function PanelPage() {
         </div>
       )}
 
+      </section>
+      <section id="dsh-hsp-panel-advanced" role="tabpanel" aria-labelledby="dsh-hsp-tab-advanced" hidden={activeTab !== 'advanced'} className={PREFIX + 'tabpanel'}>
+        {draft !== null && <details className={PREFIX + 'details'}>
+          <summary>其他插件选项</summary>
+          <div className={PREFIX + 'control'} style={{ marginTop: '10px' }}>
+            <label className={PREFIX + 'check'}>
+              <input type="checkbox" checked={draft.autoUpdate === true} onChange={(event) => set('autoUpdate', event.target.checked)} />
+              <span>自动更新（autoUpdate）</span>
+            </label>
+            <label className={PREFIX + 'check'}>
+              <input type="checkbox" checked={draft.codebaseSurvey === true} onChange={(event) => set('codebaseSurvey', event.target.checked)} />
+              <span>代码库勘察（codebaseSurvey）</span>
+            </label>
+          </div>
+        </details>}
       {extraKeys.length > 0 && (
         <details className={PREFIX + 'details'}>
           <summary>配置文件里还有 {extraKeys.length} 个本页不改写的键（保存时会原样保留）</summary>
           <div className={PREFIX + 'mono'} style={{ marginTop: '8px' }}>{extraKeys.join('、')}</div>
         </details>
       )}
+      </section>
+      {draft !== null && <div className={PREFIX + 'savebar'}>
+        <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={!dirty || saving} onClick={save}>
+          {saving ? '保存中…' : '保存'}
+        </button>
+        <button type="button" className={PREFIX + 'btn'} disabled={!dirty || saving} onClick={discard}>放弃更改</button>
+        {dirty && !saving && <span className={PREFIX + 'muted'}>有未保存的更改（所有分类）</span>}
+        {notice && <span className={PREFIX + 'notice'}>{notice}</span>}
+        {saveError && <span className={PREFIX + 'err'}>保存失败：{saveError}</span>}
+      </div>}
     </div>
   )
 }

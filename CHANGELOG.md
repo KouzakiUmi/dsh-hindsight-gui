@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-12
+
+### Added
+
+- **Dedicated embedding settings (`serverEmbeddings`)** — a new 向量模型 card in the 模型 category configures Hindsight's vectorization backend independently of the DSH chat model list. Backends: `local`, `openai` (OpenAI-compatible endpoints such as LM Studio), `onnx`, `tei`. Fields are per-backend — model plus a force-CPU toggle (`local`), model / base URL / dimensions / key-env-name / key (`openai`), model id plus dimensions (`onnx`), base URL only (`tei`) — and are stored only in this plugin's own `~/.hindsight/dsh-hindsight-gui.json`.
+- **Dimensions where the backend accepts them** — `openai` and `onnx` take an optional positive integer (empty inherits an existing dimension setting before deferring to the model or service); `local` derives it from the model and `tei` decides it remotely. Non-integer or non-positive values are rejected before anything is written.
+- **Inheritance instead of migration** — an empty provider keeps inheriting the existing `serverEnv` and host-environment `HINDSIGHT_API_EMBEDDINGS_*` values, and the preview reports the provider-selection source (`file` / `serverEnv` / `env` / `default`). These settings never migrate, copy or overwrite existing values; with a provider selected, only that provider's fields are applied, non-empty ones win and blank ones still inherit.
+- **Embedding resolution preview** — `/status` reports provider, model, endpoint, dimensions, credential source (`secretConfigured` only, never the key) and errors for missing required keys/TEI addresses, plus local-runtime and migration warnings. It reflects the SAVED settings, not the current draft and not the running configuration; the separate 当前运行 row shows only this plugin's confirmed launch snapshot, and third-party instances stay unknown.
+- **Tabbed settings page** — five categories (概览 / 记忆与连接 / 模型 / 安全 / 高级) with a standard ARIA tablist and roving tabindex, `ArrowLeft`/`ArrowRight` (wrapping) plus `Home`/`End`, a `·` marker on dirty non-active categories, drafts retained across categories, and one global 保存 / 放弃更改 bar that submits every category at once.
+
+### Changed
+
+- **Embedding credentials reuse the host credential seam** — the key-env-name is a credential reference resolved through `ctx.credentials.resolve` in the existing order 本页值 → `env:<NAME>` → `dsh-credentials:<NAME>`. Omitted or empty keys keep the saved value, and explicit `clearApiKey` removes only this page's copy — an inherited `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` or the server LLM key can still apply. An unresolvable explicit reference becomes a visible error instead of silently falling back to another source.
+- Malformed embedding fields, unsupported dedicated backends, invalid endpoints/reference names and non-positive-integer dimensions are rejected with HTTP 400 without writes. Unresolved explicit references and missing required keys/TEI addresses instead produce an error preview; start/restart preflight refuses them before stopping a healthy managed service.
+- Refresh the project homepage with an original workflow banner, labeled component previews and a separate technical reference.
+- Keep per-provider temporary drafts separate, reset unrelated fields on backend switches, and retire submitted keys from cached drafts. Chat routing is collapsible, Provider overrides are collapsed by default, the tab bar stays within its own scroll container, and duplicate migration warnings are removed.
+- **Failed launches name the embedding endpoint** — when the service exits during start-up initialization, the page points at the configured embedding endpoint (for example a local service that is not running) instead of only the exit code.
+
+### Scope
+
+- Changing the embedding model or dimensions may require rebuilding or migrating existing vector indexes. This page does not migrate indexes, download models, install dependencies, enable `trust_remote_code`, publish or automatically restart anything; existing explicit service controls retain their ownership gates.
+- The `HINDSIGHT_API_EMBEDDINGS_*` names were checked against the locally installed `hindsight-api` 0.10.2; that is a snapshot of this machine's install, not a compatibility claim for other or future versions.
+
+### Tests
+
+- Offline Host/client regressions cover the embedding mapping, CAS, credential projection, provider-switch isolation and the actual Host-to-client save contract. Browser layout/keyboard verification uses the real client with synthetic data; it is not live-service validation.
+
 ## [1.2.4] - 2026-10-12
 
 ### Changed

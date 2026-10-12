@@ -1,299 +1,124 @@
-# dsh-hindsight-gui
+<div align="center">
 
-为 [Hindsight](https://github.com/vectorize-io/hindsight) 记忆系统提供的 DeepSeek Harness 侧边栏设置页。
+<img src="https://raw.githubusercontent.com/KouzakiUmi/dsh-hindsight-gui/main/assets/banner.svg" width="100%" alt="Hindsight 设置页：在 DeepSeek Harness 中管理记忆连接、模型、向量后端与安全选项的首页插画">
 
-A settings page for the [Hindsight](https://github.com/vectorize-io/hindsight) memory stack in the DeepSeek Harness sidebar.
+# Hindsight 设置页
 
----
+**把记忆系统的连接、模型与运行状态，放进 DeepSeek Harness 的侧边栏。**
 
-## 这是什么 / What this is
+`dsh-hindsight-gui` 是 Hindsight 的配置与状态界面；记忆工具由官方集成提供，不由本插件实现。
 
-一个 DSH 插件：侧边栏一个图标按钮，点开是 Hindsight 记忆系统的设置页，编辑配置文件并显示实时运行状态。
+A settings dashboard for Hindsight in DeepSeek Harness—not a memory engine.
 
-A DSH plugin: one icon in the sidebar opens a settings page for the Hindsight memory system, editing its configuration and showing live status.
+[![npm](https://img.shields.io/npm/v/dsh-hindsight-gui?label=npm)](https://www.npmjs.com/package/dsh-hindsight-gui)
+[![CI](https://github.com/KouzakiUmi/dsh-hindsight-gui/actions/workflows/publish.yml/badge.svg)](https://github.com/KouzakiUmi/dsh-hindsight-gui/actions/workflows/publish.yml)
+[![MIT](https://img.shields.io/badge/license-MIT-68786a)](LICENSE)
 
-### 它不提供记忆功能
+[快速开始](#快速开始) · [界面预览](#五个分类一处管理) · [能力边界](#能力与安全边界) · [技术参考](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/docs/technical-reference.md)
 
-**本插件不提供任何 `hindsight_*` 工具。** 那些工具由官方的 [`@vectorize-io/hindsight-coding-agents`](https://www.npmjs.com/package/@vectorize-io/hindsight-coding-agents) 提供（它自带 MCP server）。
+</div>
 
-**This plugin provides no `hindsight_*` tools.** Those come from the official `@vectorize-io/hindsight-coding-agents` package, which ships its own MCP server.
+## 为什么需要它
 
-本插件的定位是**记忆系统的仪表盘**：它让你在 DSH 界面里查看和调整那套系统的配置与运行状态，而不是记忆功能本身。需要同时安装官方包才能真正使用记忆。
+| 遇到的问题 | 这个界面做什么 |
+| --- | --- |
+| 记忆服务是否健康、控制台是否可达，得在多个窗口间核对 | 同一设置页按分类展示 API、Control Plane、数据库与记忆库状态 |
+| 连接地址、bank 命名、不同用途的模型分散在配置中 | 按分类编辑，并在一个保存条中提交；跨分类切换保留草稿 |
+| 更改向量后端后，难分清「保存了」与「正在运行」 | 区分**已保存的下次启动预览**与**本插件确认的运行快照** |
+| 要调整服务却不想误停别人的进程 | 保留启动／重启按钮，但重启仅针对核验过的本插件直接子进程 |
 
-This plugin is a **dashboard for the memory system**: it shows and adjusts that system's configuration and status. It is not the memory system. Install the official package alongside it to actually use memory.
+## 五个分类，一处管理
 
-### 你需要自己部署 Hindsight
+**概览**查看服务、归属与启动预览，**记忆与连接**管理 API 地址和 bank，**模型**配置聊天／服务功能模型及向量后端，**安全**查看记忆库并设置审计与按 bank 脱敏，**高级**处理其它选项。五个 ARIA 标签支持方向键、`Home`、`End`；未保存草稿跨分类保留，轮询不会盖掉输入。
 
-**本插件不会安装或部署 Hindsight。** 它可连接现有 API；对于已安装的本机 `hindsight-api`，也可由插件启动，并仅在确认属于当前 Cordis effect 所启动的直接子进程时尝试停止/重启。远端、HTTPS、IPv6 和非根路径地址仅供连接与只读查询，不支持本机进程管理。使用顺序是：
+<img src="https://raw.githubusercontent.com/KouzakiUmi/dsh-hindsight-gui/main/assets/screenshots/settings-light.png" width="100%" alt="浅色主题设置页；真实 React 组件隔离渲染，显示模拟数据，不是真实服务截图">
 
-**This plugin does not install or deploy Hindsight.** It can connect to an existing API, or launch an already-installed local `hindsight-api`. Stop/restart is restricted to a verified direct child of the current Cordis effect; remote, HTTPS, IPv6 and non-root-path URLs remain connectable but cannot be managed locally. The order is:
+<sub>浅色界面：真实 React 18 组件在隔离页面中渲染，HTTP 数据为模拟值；不是生产 DSH 或真实 Hindsight 服务的截图。</sub>
 
-1. **先准备 Hindsight** — 按 [官方文档](https://hindsight.vectorize.io/) 自行部署可连接的 API，或自行安装本机 `hindsight-api` 可执行文件供插件启动；插件不安装依赖。
+<details>
+<summary>查看深色主题</summary>
 
-   **Prepare Hindsight first**: deploy a connectable API yourself, or install the local `hindsight-api` executable for the plugin to launch. The plugin never installs dependencies.
+<img src="https://raw.githubusercontent.com/KouzakiUmi/dsh-hindsight-gui/main/assets/screenshots/settings-dark.png" width="100%" alt="深色主题设置页；隔离渲染与模拟 HTTP 数据">
 
-2. **再安装这两个 DSH 包** — 官方包提供 `hindsight_*` 工具，本插件提供配置界面。两者都装才会话里才有记忆功能。
+</details>
 
-   **Then install both DSH packages** — the official package provides the `hindsight_*` tools, this one provides the settings UI. Memory only works with both.
+<details>
+<summary>查看窄屏布局</summary>
 
-3. **最后在设置页填两个地址** — 打开侧边栏的 Hindsight 页面，填入：
+<img src="https://raw.githubusercontent.com/KouzakiUmi/dsh-hindsight-gui/main/assets/screenshots/settings-mobile.png" width="100%" alt="窄屏设置页；隔离渲染与模拟 HTTP 数据">
 
-   **Finally fill in the two addresses on the settings page** — open the Hindsight page in the sidebar and enter:
+</details>
 
-   | 字段 / Field | 填什么 / What to enter | 例 / Example |
-   | --- | --- | --- |
-   | 服务地址 / Service address | 你部署的 Hindsight **API** 地址，写入 `apiUrl` | `http://127.0.0.1:8888` |
-   | 控制台地址 / Control Plane address | 你部署的 **Control Plane**（Web 控制台）地址 | `http://127.0.0.1:9999` |
+### 向量配置，按后端显示
 
-   保存后状态区会显示两个服务的运行情况：API 是否健康、用的是哪个数据库、控制台是否可达，并列出已有的记忆库。地址填错时状态显示「未运行」，改回来即可。
-
-   After saving, the status section reports whether each service is up, which database the API uses, and lists the existing banks. A wrong address shows as "not running"; correct it and the status updates.
-
-**不填控制台地址也能用** —— 记忆只需要 API 地址。控制台是可选的 Web 管理界面，不填则保持默认 `http://127.0.0.1:9999`。
-
-**The Control Plane address is optional** — memory only needs the API address. The Control Plane is the optional web UI; leave it unset and the default `http://127.0.0.1:9999` applies.
-
----
-
-## 设置页能做什么 / What the settings page does
-
-编辑 `~/.hindsight/coding-agent.json` 与插件自己的 `~/.hindsight/dsh-hindsight-gui.json`（路径均可用环境变量覆盖），并显示实时状态。
-
-Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-hindsight-gui.json` (both paths overridable by environment variable), and shows live status.
-
-### 可编辑项 / Editable settings
-
-| 区块 / Section | 控件 / Control | 写入的位置 / Written to |
+| 后端 | 本页可指定 | 需要自行准备 |
 | --- | --- | --- |
-| 记忆 / Memory | 启用/关闭本 harness 的长期记忆 | `disabled` → `coding-agent.json` |
-| 记忆库命名 / Bank naming | 按工作区动态命名（`harness::项目名`）或固定 bank id | `dynamicBankId`、`bankId` → `coding-agent.json` |
-| 连接 / Connection | **Hindsight API 地址** | `apiUrl` → `coding-agent.json` |
-| 连接 / Connection | **控制台地址（Control Plane）** | `controlPlaneUrl` → `dsh-hindsight-gui.json` |
-| 连接 / Connection | 插件日志级别（debug / info / warn / error） | `logLevel` → `coding-agent.json` |
-| 模型 / Models | **代码库勘察模型（Codebase Survey）** | `surveyModel` → `coding-agent.json` |
-| 模型 / Models | **反思推理模型（Reflect LLM）** | `serverModels.reflect` → `dsh-hindsight-gui.json` |
-| 模型 / Models | **事实提取模型（Retain LLM）** | `serverModels.retain` → `dsh-hindsight-gui.json` |
-| 模型 / Models | **记忆整理模型（Consolidation LLM）** | `serverModels.consolidation` → `dsh-hindsight-gui.json` |
-| 模型 / Models | **知识提炼模型（Mental Model Refresh LLM）** | `serverModels.mentalModel` → `dsh-hindsight-gui.json` |
-| Provider 覆盖 / Provider overrides | 为非内置 Provider 填 openai 兼端点与凭据（Base URL / API Key / 环境变量名） | `providerOverrides` → `dsh-hindsight-gui.json` |
-| 服务管理 / Service management | **启动服务 / 重启服务**按钮 | 动作（不写配置） |
-| 服务管理 / Service management | API 未运行时自动拉起 | `autoStart` → `dsh-hindsight-gui.json` |
-| 服务管理 / Service management | 启动命令覆盖（hindsight-api 完整路径，留空自动发现） | `serverCommand` → `dsh-hindsight-gui.json` |
-| 安全 / Security | 审计日志开关（`HINDSIGHT_API_AUDIT_LOG_ENABLED`） | `auditLogEnabled` → `dsh-hindsight-gui.json` |
-| 记忆库 / Banks | 按 bank 开关脱敏（Memory Defense：sensitive_data → redact） | bank config API（不落盘到本页文件） |
-| 其他 / Other | 自动更新运行时 | `autoUpdate` → `coding-agent.json` |
-| 其他 / Other | 代码库勘察 | `codebaseSurvey` → `coding-agent.json` |
+| `local` | 模型、是否强制 CPU | 本地依赖和模型 |
+| `openai` | OpenAI 兼容模型、Base URL、可选维度与凭据引用／Key | 可用端点；非空 Key 或可继承的服务端 LLM Key；本地免鉴权端点也需明确填写占位值 |
+| `onnx` | 模型 ID、可选维度 | 本地依赖和模型 |
+| `tei` | 远端服务地址 | TEI 服务；模型与维度由远端决定 |
 
-### 模型选择机制 / Model selection details
+不选后端表示继承既有服务配置。`openai` / `onnx` 的维度留空时，**先继承已有维度**；没有已有值再由后端、模型或服务决定。切换后端不自动迁移索引；修改前请核对存量向量数据。`serverEnv` 是配置文件级高级透传，**不是界面里的可编辑控件**。详细字段与凭据解析见[技术参考](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/docs/technical-reference.md)。
 
-- **DSH 环境模型自动发现**：页面打开或点击「刷新 DSH 模型」时，调用 `/plugins/dsh-hindsight-gui/models`，直接拉取当前 DSH 环境中已配置 Provider（如 `minimax-cn`、`kimi-coding`、`commandcode` 等）注册的可用模型列表。
-- **自由切换自定义输入**：下拉列表不仅支持一键点选环境模型（格式为 `provider/model`），还支持随时切换到「自定义输入...」手动键入任意模型名（如 `deepseek-flash`）。
-- **暗色主题原生适配**：下拉选择框与弹出选项遵循 `color-scheme: dark`，与 DSH 客户端深色主题完全对齐。
-- **服务端各功能模型分工**：
-  - **代码库勘察（Survey）**：新仓库结构与规范分析，默认 `haiku`；保存至 `coding-agent.json`，下一轮对话立即生效。
-  - **反思推理（Reflect）**：响应 `hindsight_reflect` 深度记忆问答，推荐推理能力强的模型（默认 `MiniMax-M3`）。
-  - **事实提取（Retain）**：高频对话事实提炼，推荐成本低、响应快且支持 JSON Schema 的模型（默认 `deepseek-flash`）。
-  - **记忆整理（Consolidation）**：后台相似记忆去重聚合。
-  - **知识提炼（Mental Model）**：刷新持久化知识库页面（架构图与概念规范）。
-  - 服务端模型保存至 `dsh-hindsight-gui.json`；**插件在启动/重启服务时按当前设置动态构建 `HINDSIGHT_API_*_LLM_*` 环境变量**（见下文「服务管理」），不再依赖任何静态启动脚本。
+### 从修改到生效，四种状态别混淆
 
-### 服务管理 / Service management
+1. **正在编辑**：切换五个分类时输入仍留在草稿；底部统一保存或放弃更改。
+2. **已经保存**：两份配置分别按字段写入。`apiUrl` 与 `surveyModel` 等在上游 `coding-agent.json`；服务模型、向量、控制台地址在本插件 `dsh-hindsight-gui.json`。
+3. **下次启动预览**：向量卡片显示基于已保存值解析的后端、模型、维度、配置和凭据来源；它**不是当前草稿**，也不保证外部服务采用了这些值。
+4. **当前运行快照**：只有本插件成功启动且确认过的服务才有快照。外部服务即使健康，也不推断其内部配置。
 
-插件自带受控的本机服务管理；本页保存的设置是下次插件启动的输入，不代表外部服务已经采用这些设置：
+保存失败、配置读取失败、409 冲突及非法维度会显式提示。两个文件逐个保存，不是跨文件事务；遇到部分保存提示时请刷新后核对，不要按「保存成功」猜测另一份文件已经写入。
 
-- **启动 / 重启按钮**：host 查找已安装的 `hindsight-api`（`serverCommand` → `PATH` → 常见 uv/pip 位置），启动后轮询 `/health`（最长 90 秒）。仅当前 Cordis effect 保留的直接 ChildProcess 且 PID、操作系统启动时间与可执行路径核验一致时可尝试重启；端口占用不授予终止权限。监听 PID 不同则安全拒绝。Windows 仅使用不带 `/F` 的 `taskkill /PID` 温和尝试，失败须手动关闭，没有强制回退。热重载后旧服务可能仍存活，但新插件实例将其视为 unmanaged。
-- **自动启动**：开启后页面可请求 host 拉起未运行、且可管理的本机 API（45 秒冷却）；第三方实例不会被接管。
-- **凭据解析链**：设置页 Provider 覆盖（Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → `ctx.credentials.resolve` 宿主凭据服务；不直接扫描凭据 YAML。状态仅显示来源或失败原因，不返回密钥。
-- **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。
-- **生效时机**：服务端设置下次成功启动时应用；运行配置只是本插件启动确认后的快照，不是第三方服务真实配置查询。外部实例的运行配置未知，`pendingRestart` 只对已确认的本插件实例有意义。
-- **审计日志**：`auditLogEnabled` 映射为 `HINDSIGHT_API_AUDIT_LOG_ENABLED`（部署级默认，可按 bank 在 Control Plane 覆盖）。
-- **脱敏（Memory Defense）**：按 bank 仅编辑本页持有的规范规则 `{on: sensitive_data, action: redact}`，保留其它更强或自定义规则；不能据此保证第三方服务原始日志或历史备份已清理。
-- **环境变量透传**：`serverEnv`（高级）仅允许 `HINDSIGHT_API_*`、`NO_PROXY`/`no_proxy`、`PYTHONUTF8` 字符串变量；页面明确设置的模型、审计和 Provider 等值优先于透传值。
+### 连接与本机管理的区别
 
-**两个地址与模型写进不同的文件**：`apiUrl` 和 `surveyModel` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 和 `serverModels` 存入插件自有配置文件 `~/.hindsight/dsh-hindsight-gui.json` 中。
-
-**The two addresses go to different files**: `apiUrl` is a key the upstream integration reads, so it stays in `coding-agent.json`. `controlPlaneUrl` is not a key upstream knows at all — writing it there would only pollute a file the integration maintains — so it lives in this plugin's own `~/.hindsight/dsh-hindsight-gui.json`.
-
-
-### 只读展示 / Read-only display
-
-- **服务状态** — API 是否运行、健康状态、数据库类型、Control Plane 是否可达、启动入口与最近一次启动/重启结果
-- **路由解析预览** — 下次本插件启动/重启拟应用的模型与凭据来源及失败原因；已保存 Provider Key 仅返回 `secretConfigured`，留空/省略 Key 保留原值，非空输入更换，显式 `clearApiKey` 才清除
-- **记忆库列表** — 每个 bank 的 id、fact 数量、脱敏开关状态
-- **本页不写的键** — 配置文件里本页不管理的键（如 `banks`、`paths`、`mapPathToBank`），折叠列出，保存时原样保留
-
-### 生效时机 / When a save takes effect
-
-记忆类设置（`disabled`、`bankId`、`surveyModel` 等）随集成每次 `loadConfig()` 重新读取，**下一轮对话**即生效，无需重启。
-
-服务端设置（`serverModels`、`auditLogEnabled`、`providerOverrides`、`serverEnv`、`serverCommand`）塑造的是**服务进程的环境**，在下次启动/重启时应用——页面会显示「pendingRestart」提示并提供重启按钮。
-
-Memory-side settings take effect on the next turn — the integration re-reads the config file on every `loadConfig()` call. Server-side settings shape the server process environment and apply on the next start/restart; the page tracks that with a pending-restart banner and offers the button.
-
----
-
-## 设计说明 / Design notes
-
-### 为什么页面要经过 host 转发
-
-Hindsight API 在 `127.0.0.1:8888` 上响应时**不返回 `Access-Control-Allow-Origin` 头**（地址可用 `HINDSIGHT_API_URL` 覆盖），浏览器会拒绝来自 DSH 页面的跨域 `fetch`。所以 host 半侧是一个同源代理：页面调用 DSH web server 上的 `/plugins/dsh-hindsight-gui/status` 与 `/config`，由 host 在服务端发起 API 请求——那里不存在 CORS 限制。
-
-The Hindsight API answers on `127.0.0.1:8888` **without an `Access-Control-Allow-Origin` header**, so a cross-origin `fetch` from the DSH page is refused by the browser. The host half is therefore a same-origin proxy: the page calls `/plugins/dsh-hindsight-gui/status` and `…/config` on the DSH web server, and the API request is made there, server-side, where CORS does not apply.
-
-### 写入的安全性
-
-- **键白名单** — 只有上表列出的键可以被页面写入，其余一律拒绝并回报
-- **单文件原子保存** — 写临时文件后 rename；两个配置文件之间不是事务，失败时可能只保存一份，响应会明确报告部分保存，须刷新核对
-- **并发与损坏保护** — 保存需要两文件 revision 比对，文件损坏时拒绝覆盖；前端未保存编辑不会被轮询覆盖，错误状态可见
-- **保留备份** — 写入已有文件前复制为 `.bak`；备份及第三方原始日志不属于本页脱敏清理范围
-- **同源限制** — 必须是发往 DSH web server 自身端口的 loopback 同源请求；变更类请求还必须携带合法 `Origin`
-- **体积限制** — 请求体上限 32 KB，10 秒超时
-
-- **Key whitelist** — only the keys listed above are writable; the rest are rejected and reported back
-- **Per-file atomic save and revision checks** — temp file plus rename and a `.bak` copy for existing files; the two files are not transactional and a partial save is reported. Corrupt files are not overwritten; refresh after a conflict. Host errors and log summaries are redacted, not third-party raw logs or historical backups.
-- **Same-origin only** — loopback requests on the DSH server's own port; mutating requests must also carry a valid `Origin`
-- **Size cap** — 32 KB request body, 10 s deadline
-
-### 缺失配置时的行为
-
-配置文件不存在时页面可显示默认值并首次保存；JSON 损坏或读取失败时会显示错误并拒绝覆盖，需先手动修复文件。
-
-Missing config files can be created on first save. Malformed or unreadable files show an error and cannot be overwritten until repaired.
-
-### 环境变量
-
-| 变量 | 默认 | 作用 |
+| 目标 | 状态读取 | 本机启动／重启 |
 | --- | --- | --- |
-| `HINDSIGHT_CONFIG` | `~/.hindsight/coding-agent.json` | 上游配置文件路径 |
-| `HINDSIGHT_GUI_CONFIG` | `~/.hindsight/dsh-hindsight-gui.json` | 插件自有配置文件路径 |
-| `HINDSIGHT_CP_URL` | `http://127.0.0.1:9999` | 控制台地址的**回退值**；设置页保存后以文件为准 |
-| `HINDSIGHT_API_URL` | `http://127.0.0.1:8888` | 状态检查所查询的 API 地址（只读，不覆盖设置页填的 `apiUrl`） |
+| 既有 Hindsight API | 支持连接和健康查询 | 第三方进程不可被本插件接管或停止 |
+| 本插件启动的本机 API | 支持 | 仅在进程身份和目标均核验通过时可重启 |
+| 远端、HTTPS、IPv6 或非根路径 URL | 可连接并查询；库策略写入须满足目标校验及上游权限 | 不提供本机进程管理 |
 
-控制台地址的解析顺序：**设置页保存的文件值 → `HINDSIGHT_CP_URL` → 默认值**。页面会把当前值和它的来源显示出来，所以一眼能看出是自己在管还是继承了环境变量。
+**启动服务**按钮查找已安装的 `hindsight-api` 并做健康检查；**重启服务**按钮先预检再对经核验的直接子进程操作。向量预览或模型凭据解析错误时，按钮可能保持禁用。功能不等于部署器，也不负责下载模型、重建向量索引或开启 `trust_remote_code`。
 
-The Control Plane address resolves in this order: the value saved from the page, then `HINDSIGHT_CP_URL`, then the default. The page shows both the current value and where it came from.
+## 快速开始
 
-### 地址校验
+1. **准备服务**：按 [Hindsight 官方文档](https://hindsight.vectorize.io/) 自行部署可连接的 API；如需用本页的本机启动按钮，自行安装 `hindsight-api` 可执行文件。本插件不安装或部署服务与模型。
+2. **安装两个职责不同的 DSH 包**：官方 `@vectorize-io/hindsight-coding-agents` 提供 `hindsight_*` 工具和 MCP server；`dsh-hindsight-gui` 提供设置界面。只需要记忆功能时，GUI 并非官方集成的必需依赖。
 
-API、Control Plane 和 Provider Base URL 在保存前校验：仅限 `http`/`https`，不含内嵌凭据、query 或 fragment；保留合法的服务路径。非法地址会明确报错，不静默回退到另一实例。本机服务管理只支持根路径的 IPv4 回环 HTTP 地址。记忆库策略写入还会核对页面所指 API 地址，地址变化时返回 409，避免修改另一个实例的同名记忆库。
-
-API, Control Plane and provider base URLs are validated before saving: HTTP(S) only, without credentials, query or fragment; valid base paths are preserved. Invalid URLs do not silently fall back to another instance. Local process management requires a root-path IPv4 loopback HTTP URL. Bank policy writes include the expected API base and reject a changed target with HTTP 409.
-
----
-
-## 安装 / Installation
-
-统一通过 `dsh plugin` 操作目标 Profile；执行前核对命令入口和 Profile，不在 Profile 内裸跑 npm/pnpm 安装。以下使用 `web` 作为示例 Profile，不代表实际安装目标。一般插件兼容性以目标实际 DSH Core 版本及其导出契约为准，CLI、npm 管理器和桌面壳版本不是通用的额外兼容门槛。
-
-Use `dsh plugin` for the target Profile after verifying the command entry and Profile. Do not run bare npm/pnpm installs inside a Profile. Plugin compatibility is based on the actual target DSH Core contracts, not a blanket CLI, npm-manager or desktop-shell version requirement:
-
-```bash
+```console
+dsh plugin --profile web add @vectorize-io/hindsight-coding-agents
 dsh plugin --profile web add dsh-hindsight-gui
 ```
 
-然后确认 `dsh-hindsight-gui` 在 profile 的 `dsh.profile.bundles` 列表里，**重启 DSH** 让 host 与浏览器两半重新加载。
+这里的 `web` **仅为示例 Profile**。请先核对实际目标与 CLI 入口；Desktop 应使用目标桌面壳提供的 **DSH Desktop CLI**，而不是用普通独立公共/Core CLI 管理其 Profile。安装不等于启用：核对 bundle 列表，按目标部署方式重新加载或重启 Host 与 Client；不要在 Profile 里裸跑 npm/pnpm。
 
-Then make sure `dsh-hindsight-gui` is listed in the profile's `dsh.profile.bundles`, and **restart DSH** so the host and browser halves reload.
+3. **打开侧边栏 Hindsight 页面**：填写 Hindsight **API 地址**（例如 `http://127.0.0.1:8888`）；Control Plane 是可选的管理界面（默认 `http://127.0.0.1:9999`）。保存后查看健康状态和 bank 列表。安装目标、服务版本与可用功能须以你的实际环境核实。
 
-从源码安装（开发用）：`git clone` 后 `pnpm install`，再 `dsh plugin --profile web add file:/path/to/dsh-hindsight-gui`。
+## 能力与安全边界
 
-To install from source (for development): `git clone`, `pnpm install`, then `dsh plugin --profile web add file:/path/to/dsh-hindsight-gui`.
+- **不是记忆引擎**：本插件不提供 `hindsight_*` 工具，也不部署 Hindsight。与官方集成配合使用时，它负责配置和状态，记忆读写由官方包及 Hindsight 服务承担。
+- **保存不等于运行**：记忆集成配置在下一轮对话重新读取；服务端模型、向量配置、审计等仅在下次**受控启动／重启**时应用，不会因保存自动重启服务。手动启动／重启按钮仍存在，且遵守所有权与预检门禁；远端、HTTPS、IPv6、非根路径服务可连接，但不由本机进程管理；这不等于把其库配置 API 限定为只读。
+- **不会任意终止 PID**：只尝试停止当前 Cordis effect 持有、PID／启动时间／可执行路径经核验的直接子进程；端口被占用不授予终止权限。Windows 仅尝试非强制停止，失败时需手动处理，不以强制结束兜底。外部实例的真实运行配置未知。
+- **凭据和数据边界**：凭据不会在预览中回传明文，但配置文件不是加密保险箱；显式清除本页 Key 也不保证继承环境中的 Key 消失。按 bank 脱敏不能替第三方清理原始日志或历史备份。保存采用键白名单、revision 冲突检查和逐文件原子写入；两个文件**不是一个事务**。
 
-### 记忆功能 / Memory
+## 测试与兼容性
 
-记忆工具由官方包提供，与本插件并列启用：
+项目包含 Host / Client 离线回归与前后端契约测试，覆盖向量参数映射、凭据投影、修订冲突、草稿保护和进程归属。界面的浅色／深色、窄屏与键盘操作使用真实 React 组件和模拟 HTTP 数据进行隔离验证。
 
-The memory tools come from the official package, enabled alongside this plugin:
+这些测试不替代具体部署的运行验收。请核对目标 DSH Core 的导出契约，以及 Hindsight 服务版本和所选向量后端的依赖；详细验证与开发方法见[技术参考](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/docs/technical-reference.md)。
 
-```bash
-dsh plugin --profile web add @vectorize-io/hindsight-coding-agents
-```
+### 遇到状态与预期不一致？
 
-### Hindsight 服务端 / Hindsight server
+- 「API 未运行」：先核对 API 地址及服务自身健康端点；不要把 Control Plane 不可达误判为记忆 API 必然不可用。
+- 「待下次启动应用」：它说明保存值与已确认的启动快照不同；对第三方实例，插件不能确认其实际运行配置。
+- 「维度未知」：不要据此填写猜测值，先确认既有索引和后端模型；空值可能继续继承旧配置。
+- 「无法重启」：检查目标是否本插件当前生命周期所持有的直接子进程；即使端口上有服务也不能据此强制结束。
 
-本插件**不负责部署 Hindsight 服务端**，详见上面的「你需要自己部署 Hindsight」。
+## 进一步了解
 
-This plugin **does not deploy a Hindsight server** — see "You need to deploy Hindsight yourself" above.
-
----
-
-## 开发 / Development
-
-```bash
-pnpm install
-pnpm build:client              # esbuild → lib/client.cjs → lib/client.js
-node scripts/check-manifest.mjs  # 校验 manifest、命名一致性与语法
-node scripts/test-host.mjs       # 离线 host 回归测试
-node scripts/test-client.mjs     # 离线 client 回归测试
-```
-
-浏览器半侧打包为 CJS 模块并包进 `window.__ModuleLoader__.load({ id: … })`，`react` 保持 external（由宿主提供）。
-
-`lib/client.js` 是**构建产物**，不要直接编辑——改 `src/client/index.tsx`。改完务必重新构建，否则页面会静默保持旧行为；`check-manifest.mjs` 会检测出产物比源码旧的情况。
-
-`lib/client.js` is a **build artifact** — edit `src/client/index.tsx` instead. Rebuild after every change, or the page silently keeps the old behaviour; `check-manifest.mjs` detects a bundle older than its source.
-
-```
-cordis.patch.yml                自我挂载：只向 loader 插入一行
-lib/index.js                    host 半侧 —— /status 与 /config 路由
-lib/client.js, lib/client.cjs   构建产物（勿改）
-src/client/index.tsx            浏览器半侧源码
-scripts/build-client.mjs        客户端构建脚本
-scripts/check-manifest.mjs      仓库一致性校验
-```
-
----
-
-## 发布 / Publishing
-
-每次推送到 `main`，GitHub Actions 会检查客户端构建、manifest 和打包内容，然后通过 npm Trusted Publishing 自动发布到 `latest`。PR 只检查，不发布。
-
-Every push to `main` builds and validates the package, then publishes it to npm with Trusted Publishing. Pull requests only run checks.
-
-### 自动版本号 / Automatic versions
-
-- 如果 `package.json` 的版本高于 npm 上所有稳定版本，使用该版本。例如源代码为 `1.1.0`、npm 为 `1.0.0`，首次自动发布 `1.1.0`。
-- 否则在 npm 的最高稳定版本上递增 patch：`1.1.0` → `1.1.1` → `1.1.2`。
-- 自动版本号只写入 CI 中的发布包，不回写仓库。需要提升 minor 或 major 时，手动调整 `package.json`。
-- 已发布的同一提交重跑时跳过发布。不同发布任务共享并发组，防止同时选择相同版本。
-- 仍支持 `v*` 标签发布指定版本；标签必须等于 `package.json` 的版本，且不能重复覆盖 npm 上已有的版本。
-
-CI uses the source version when it exceeds all published stable versions; otherwise it increments the highest published patch version. It changes only the CI package, without committing version changes back. Re-running an already published commit skips publishing. Tags remain available for explicit versions.
-
-### 一次性 npm 授权 / One-time npm authorization
-
-包已存在于 npm。以包维护者账户打开 [包设置](https://www.npmjs.com/package/dsh-hindsight-gui/access)，在 Trusted Publisher 中选择 GitHub Actions，核对：
-
-| 字段 | 值 |
+| 文档 | 内容 |
 | --- | --- |
-| Organization or user | `KouzakiUmi` |
-| Repository | `dsh-hindsight-gui` |
-| Workflow filename | `publish.yml` |
-| Environment name | 留空（此工作流没有使用 environment） |
-| Allowed actions | 允许 `npm publish` |
+| [技术参考](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/docs/technical-reference.md) | 配置字段、写入边界、服务管理、开发与发布流程 |
+| [源码：Host](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/lib/index.js) / [Client](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/src/client/index.tsx) | 实际接口及界面实现；[client.js](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/lib/client.js) 是构建产物 |
+| [Hindsight 官方](https://github.com/vectorize-io/hindsight) | 上游记忆系统与部署说明 |
 
-The package already exists. Configure its Trusted Publisher for `KouzakiUmi/dsh-hindsight-gui`, workflow `publish.yml`, with no environment restriction, and allow direct `npm publish`.
-
-工作流使用 Node 24，并显式安装 npm 11；OIDC 发布要求 npm ≥11.5.1、Node ≥22.14.0。无需 `NPM_TOKEN` secret，也不依赖本机登录或 Windows Hello。包设置的授权字段必须与工作流匹配；已有配置过期或不匹配时，需要在 npm 端重新配置。
-
-Trusted Publishing needs npm ≥11.5.1 and Node ≥22.14.0. The workflow uses Node 24 and explicitly installs npm 11. No npm token or local login is needed.
-
-参考：[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)。
-
-### 演练 / Dry run
-
-在 GitHub Actions 的 Publish 工作流点击 Run workflow，保留默认 `dry-run: true`。它会检查并上传待发布 tarball，不实际发布。手动实际发布时选择 `main` 并将 `dry-run` 设为 `false`。
-
-Run the Publish workflow with its default `dry-run: true` to validate and upload the release tarball. Select `main` and disable dry-run for a manual release.
-
----
-
-## 上游 / Upstream
-
-Hindsight 本身未被修改，来自 [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight)（MIT）。本仓库是围绕它的界面集成。
-
-Hindsight itself is unmodified and comes from [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight) (MIT). This repository is a UI integration around it.
-
-## 许可 / License
-
-MIT
+[MIT License](LICENSE) · [报告问题](https://github.com/KouzakiUmi/dsh-hindsight-gui/issues)

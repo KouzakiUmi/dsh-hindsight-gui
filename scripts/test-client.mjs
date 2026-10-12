@@ -104,7 +104,9 @@ function createHarness() {
       instances.add(child)
       return [{ kind: 'component', instance: child }]
     }
-    return [{ kind: 'host', tag: node.type, props: node.props || {}, children: normalize(node.props ? node.props.children : undefined, parent, keyPath + '.h', prevChildMap) }]
+    const host = { kind: 'host', tag: node.type, props: node.props || {}, children: normalize(node.props ? node.props.children : undefined, parent, keyPath + '.h', prevChildMap) }
+    if (typeof host.props.ref === 'function') host.props.ref({ focus() { fakeDocument.activeId = host.props.id } })
+    return [host]
   }
 
   function unmount(instance) {
@@ -209,11 +211,17 @@ function createHarness() {
 // ---------------------------------------------------------------------------
 // 3. 查询/事件辅助
 // ---------------------------------------------------------------------------
-function hostNodes(root) {
+function hostNodes(root, includeHidden = false) {
   const out = []
   const rec = (nodes) => {
     for (const n of nodes ?? []) {
-      if (n.kind === 'host') { out.push(n); rec(n.children) } else if (n.kind === 'component') rec(n.instance.childList)
+      if (n.kind === 'host') {
+        if (n.props.hidden && !includeHidden) continue
+        out.push(n)
+        rec(n.tag === 'details' && !n.props.open && !includeHidden
+          ? n.children.filter((child) => child.kind === 'host' && child.tag === 'summary')
+          : n.children)
+      } else if (n.kind === 'component') rec(n.instance.childList)
     }
   }
   rec(root.childList)
@@ -226,7 +234,9 @@ function textOfNode(node) {
     if (!n) return
     if (Array.isArray(n)) return n.forEach(rec)
     if (n.kind === 'text') acc.push(n.text)
-    else if (n.kind === 'host') rec(n.children)
+    else if (n.kind === 'host' && !n.props.hidden) rec(n.tag === 'details' && !n.props.open
+      ? n.children.filter((child) => child.kind === 'host' && child.tag === 'summary')
+      : n.children)
     else if (n.kind === 'component') rec(n.instance.childList)
   }
   rec(node)
@@ -252,7 +262,29 @@ function defenseToggle(root) {
   return label ? label.children.find((n) => n.kind === 'host' && n.tag === 'input') : undefined
 }
 
-function click(node) { node.props.onClick({ preventDefault() {}, target: {} }) }
+function click(node) { assert.ok(node, 'expected a visible clickable element'); node.props.onClick({ preventDefault() {}, target: {} }) }
+function detailsBySummary(root, title) {
+  return hostNodes(root).find((n) => n.tag === 'details' && n.children.some((child) =>
+    child.kind === 'host' && child.tag === 'summary' && textOfNode(child).includes(title)))
+}
+function toggleDetails(harness, root, title) {
+  const details = detailsBySummary(root, title)
+  assert.ok(details, `details ${title} exists`)
+  const initial = details.props.open === true
+  click(details.children.find((child) => child.kind === 'host' && child.tag === 'summary'))
+  harness.flush()
+  assert.equal(detailsBySummary(root, title).props.open, !initial, `${title} toggled`)
+}
+function switchTab(harness, root, name) {
+  const tab = hostNodes(root).find((n) => n.props.role === 'tab' && textOfNode(n).startsWith(name))
+  assert.ok(tab, `tab ${name} exists`)
+  click(tab)
+  harness.flush()
+  assert.equal(tabByName(root, name).props['aria-selected'], true, `tab ${name} selected`)
+}
+function tabByName(root, name) {
+  return hostNodes(root).find((n) => n.props.role === 'tab' && textOfNode(n).startsWith(name))
+}
 function change(node, value) { node.props.onChange({ target: { value } }) }
 function check(node, checked) { node.props.onChange({ target: { checked } }) }
 
@@ -330,12 +362,14 @@ function baseStatus(over = {}) {
       path: '/c/gui.json', controlPlaneUrl: 'http://127.0.0.1:9999', source: 'file', revision: 'gui-rev-1',
       serverModels: {}, auditLogEnabled: false, autoStart: false, serverCommand: '',
       providerOverrides: {}, serverEnv: [], pendingRestart: false,
+      serverEmbeddings: { provider: '', model: '', baseUrl: '', dimensions: null, apiKeyEnv: '', localForceCpu: null, secretConfigured: false },
     },
     server: {
       port: 8888, up: true, ownership: 'managed', canStart: false, canRestart: true, operation: null,
       entry: { command: 'hindsight-api', source: 'PATH' }, managedPid: 1234, startedAt: '2026-10-12T00:00:00Z',
       lastAction: null, autoStart: false, pendingRestart: false, auditLogEnabled: false,
       runtimeConfigKnown: true,
+      embeddingPreview: { provider: 'local', model: 'legacy-model', baseUrl: null, dimensions: null, credentialSource: null, secretConfigured: false, source: 'serverEnv', mode: 'inherit', note: '旧配置继承预览', warnings: [] },
       runningConfig: { fingerprint: 'fp-1', startedAt: '2026-10-12T00:00:00Z', resolutions: [], auditLogEnabled: false },
       resolutions: [],
     },
@@ -345,7 +379,7 @@ function baseStatus(over = {}) {
   return Object.assign(status, over)
 }
 
-async function mountPage(fetchMock, { status, models } = {}) {
+async function mountPage(fetchMock, { status, models, tab = '记忆与连接' } = {}) {
   const harness = createHarness()
   const mod = loadModule(harness, fetchMock)
   let Page = null
@@ -361,6 +395,7 @@ async function mountPage(fetchMock, { status, models } = {}) {
   if (status) await fetchMock.respond('/status', { payload: status })
   if (models) await fetchMock.respond('/models', { payload: models })
   await harness.settle()
+  switchTab(harness, root, tab)
   return { harness, root, mod }
 }
 
@@ -381,6 +416,7 @@ test('15秒轮询不覆盖 dirty 草稿；discard 回到最新服务器状态', 
   assert.ok(pageText(root).includes('有未保存的更改'), 'dirty hint shown')
 
   // 模拟一次轮询：服务器上的值变了
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '刷新状态'))
   const statusB = baseStatus()
   statusB.config.values.apiUrl = 'http://127.0.0.1:8888'
@@ -389,6 +425,7 @@ test('15秒轮询不覆盖 dirty 草稿；discard 回到最新服务器状态', 
   await fetchMock.respond('/status', { payload: statusB })
   await harness.settle()
 
+  switchTab(harness, root, '记忆与连接')
   assert.equal(apiUrlInput(root).props.value, 'http://127.0.0.1:7777', 'draft survives the poll')
   assert.ok(pageText(root).includes('有未保存的更改'), 'still dirty after poll')
 
@@ -463,6 +500,7 @@ test('保存成功使在途 status 轮询失效，迟到的 poll 不覆盖保存
   click(buttonByText(root, '保存'))
   harness.flush()
   // 保存尚未返回时又触发一次轮询
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '刷新状态'))
   harness.flush()
 
@@ -471,6 +509,7 @@ test('保存成功使在途 status 轮询失效，迟到的 poll 不覆盖保存
   saved.config.revision = 'cfg-rev-2'
   await fetchMock.respond('/config', { payload: Object.assign(saved, { saved: ['apiUrl'] }) })
   await harness.settle()
+  switchTab(harness, root, '记忆与连接')
   assert.equal(apiUrlInput(root).props.value, 'http://127.0.0.1:7001', 'saved value shown')
   assert.ok(!pageText(root).includes('有未保存的更改'), 'clean after save')
 
@@ -487,7 +526,10 @@ test('providerOverrides：空 apiKey=保留，非空=替换，clearApiKey=true �
   const fetchMock = createFetchMock()
   const status = baseStatus()
   status.gui.providerOverrides = { demo: { provider: 'demo', baseUrl: 'https://api.demo.dev/v1', apiKeyEnv: '', secretConfigured: true } }
-  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK })
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
+  assert.equal(detailsBySummary(root, 'Provider 覆盖').props.open, false, 'override editor starts closed')
+  assert.equal(inputs(root, 'password').find((input) => input.props.placeholder === '已保存 Key（输入以替换）'), undefined, 'closed editor is not queryable')
+  toggleDetails(harness, root, 'Provider 覆盖')
 
   const password = inputs(root, 'password').find((input) => input.props.placeholder === '已保存 Key（输入以替换）')
   assert.equal(password.props.value, '', 'no stored key material in the draft')
@@ -524,7 +566,7 @@ test('bankdefense：读取失败=unknown 且禁止写入；API 地址变更重�
   const fetchMock = createFetchMock()
   const status = baseStatus()
   status.banks = [{ id: 'bank-a', name: 'A', facts: 3, updatedAt: null }]
-  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK })
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '安全' })
 
   await fetchMock.respond('/bankdefense', { status: 500, payload: { error: 'boom' } })
   await harness.settle()
@@ -536,9 +578,11 @@ test('bankdefense：读取失败=unknown 且禁止写入；API 地址变更重�
   const statusB = baseStatus()
   statusB.api.url = 'http://127.0.0.1:8899'
   statusB.banks = [{ id: 'bank-a', name: 'A', facts: 3, updatedAt: null }]
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '刷新状态'))
   await fetchMock.respond('/status', { payload: statusB })
   await harness.settle()
+  switchTab(harness, root, '安全')
   assert.ok(fetchMock.count('/bankdefense') >= 2, 'policy re-read after API base change')
   assert.ok(fetchMock.last('/bankdefense').url.includes('apiUrl='), 'GET carries the API base for host check')
   await fetchMock.respond('/bankdefense', { payload: { bank: 'bank-a', memoryDefense: { enabled: true, rules: [{ on: 'sensitive_data', action: 'redact' }] } } })
@@ -565,7 +609,7 @@ test('bankdefense canonical 判定：strong block 不算 enabled', async () => {
   const fetchMock = createFetchMock()
   const status = baseStatus()
   status.banks = [{ id: 'bank-strong', name: 'S', facts: 1, updatedAt: null }]
-  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK })
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '安全' })
 
   await fetchMock.respond('/bankdefense', {
     payload: { bank: 'bank-strong', memoryDefense: { enabled: true, rules: [{ on: 'sensitive_data', action: 'block', severity: 'strict' }] } },
@@ -588,15 +632,17 @@ test('bankdefense：API 切换后旧基地的迟到响应不落新 cache', async
   const fetchMock = createFetchMock()
   const status = baseStatus()
   status.banks = [{ id: 'bank-c', name: 'C', facts: 2, updatedAt: null }]
-  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK })
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '安全' })
   // 第一个 GET（旧基地 8888）仍在途
 
   const statusB = baseStatus()
   statusB.api.url = 'http://127.0.0.1:8899'
   statusB.banks = [{ id: 'bank-c', name: 'C', facts: 2, updatedAt: null }]
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '刷新状态'))
   await fetchMock.respond('/status', { payload: statusB })
   await harness.settle()
+  switchTab(harness, root, '安全')
   assert.ok(fetchMock.pendingCount() >= 1, 'second GET issued for the new base')
 
   // 旧基地的响应晚到：必须被代次守卫丢弃（不得写进新 cache）
@@ -618,7 +664,7 @@ test('bankdefense：API 切换后旧基地的迟到响应不落新 cache', async
 test('模型发现：error/partial 明确展示，空列表不当成功', async () => {
   const fetchMock = createFetchMock()
   const { harness, root } = await mountPage(fetchMock, {
-    status: baseStatus(),
+    status: baseStatus(), tab: '模型',
     models: { providers: [], errors: [{ provider: 'deepseek', error: 'timeout' }], state: 'error', sampledAt: null },
   })
   assert.ok(pageText(root).includes('无法获取 DSH 模型列表'), 'model discovery error shown')
@@ -640,7 +686,7 @@ test('服务门控：unmanaged 禁重启；operation 期间按钮禁用；legacy
   status.server.canRestart = false
   status.server.pendingRestart = true
   status.server.runtimeConfigKnown = false
-  const first = await mountPage(createFetchMock(), { status, models: MODELS_OK })
+  const first = await mountPage(createFetchMock(), { status, models: MODELS_OK, tab: '概览' })
   assert.equal(buttonByText(first.root, '立即重启生效').props.disabled, true, 'pending banner obeys ownership fence too')
   assert.ok(pageText(first.root).includes('当前实例配置未知'), 'pending restart never claims an unmanaged instance runs old config')
 
@@ -653,7 +699,7 @@ test('服务门控：unmanaged 禁重启；operation 期间按钮禁用；legacy
   opStatus.server.ownership = 'managed'
   opStatus.server.canRestart = true
   opStatus.server.operation = 'restart'
-  const second = await mountPage(createFetchMock(), { status: opStatus, models: MODELS_OK })
+  const second = await mountPage(createFetchMock(), { status: opStatus, models: MODELS_OK, tab: '概览' })
   assert.equal(buttonByText(second.root, '重启中…').props.disabled, true, 'button disabled while host operation in flight')
   assert.ok(pageText(second.root).includes('运行中配置') && pageText(second.root).includes('fp-1'), 'runningConfig shown')
 
@@ -663,7 +709,7 @@ test('服务门控：unmanaged 禁重启；operation 期间按钮禁用；legacy
   delete legacy.server.canStart
   delete legacy.server.canRestart
   delete legacy.server.operation
-  const third = await mountPage(createFetchMock(), { status: legacy, models: MODELS_OK })
+  const third = await mountPage(createFetchMock(), { status: legacy, models: MODELS_OK, tab: '概览' })
   assert.equal(buttonByText(third.root, '重启服务').props.disabled, true, 'legacy host: restart denied by default')
   assert.equal(buttonByText(third.root, '启动服务').props.disabled, true, 'legacy host: start denied while API up')
 })
@@ -751,6 +797,7 @@ test('dirty 时服务操作先保存再执行', async () => {
 
   change(apiUrlInput(root), 'http://127.0.0.1:7777')
   harness.flush()
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '重启服务'))
   harness.flush()
   assert.equal(fetchMock.count('/config'), 1, 'save issued first')
@@ -777,11 +824,13 @@ test('保存期间又有新编辑时服务操作中止，不用旧配置执行',
 
   change(apiUrlInput(root), 'http://127.0.0.1:7777')
   harness.flush()
+  switchTab(harness, root, '概览')
   click(buttonByText(root, '重启服务'))
   harness.flush()
   assert.equal(fetchMock.count('/config'), 1, 'save issued first')
 
-  // 保存尚未返回时又改了别的字段
+  // 保存尚未返回时切回另一个分类继续编辑
+  switchTab(harness, root, '记忆与连接')
   change(apiUrlInput(root), 'http://127.0.0.1:7778')
   harness.flush()
 
@@ -790,7 +839,9 @@ test('保存期间又有新编辑时服务操作中止，不用旧配置执行',
   await fetchMock.respond('/config', { payload: Object.assign(saved, { saved: ['apiUrl'] }) })
   await harness.settle()
   assert.equal(fetchMock.count('/server/restart'), 0, 'restart NOT run against stale saved config')
+  switchTab(harness, root, '概览')
   assert.ok(pageText(root).includes('操作未执行'), 'abort message shown')
+  switchTab(harness, root, '记忆与连接')
   assert.equal(apiUrlInput(root).props.value, 'http://127.0.0.1:7778', 'newest input kept')
   assert.ok(pageText(root).includes('有未保存的更改'), 'newest edit still dirty')
 })
@@ -818,7 +869,7 @@ test('auditLogEnabled=null（继承）时保存其它字段不夹带 false', asy
 
 test('迟到响应不覆盖新响应；卸载后不再动作', async () => {
   const fetchMock = createFetchMock()
-  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK })
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK, tab: '概览' })
   assert.ok(pageText(root).includes('http://127.0.0.1:9999'))
 
   click(buttonByText(root, '刷新状态'))
@@ -851,10 +902,316 @@ test('迟到响应不覆盖新响应；卸载后不再动作', async () => {
   await harness.settle()
 })
 
+test('五个分类具备 ARIA、键盘循环与 roving tabindex，切换不丢跨分类草稿', async () => {
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK })
+  assert.equal(hostNodes(root).filter((n) => n.props.role === 'tablist').length, 1)
+  assert.equal(hostNodes(root).filter((n) => n.props.role === 'tab').length, 5)
+  change(apiUrlInput(root), 'http://localhost:7788')
+  harness.flush()
+  switchTab(harness, root, '模型')
+  assert.equal(apiUrlInput(root), undefined, 'hidden panel fields are not queryable')
+  assert.equal(hostNodes(root).filter((n) => n.props.role === 'tabpanel').length, 1, 'only one panel is visible')
+  assert.equal(hostNodes(root, true).filter((n) => n.props.role === 'tabpanel').length, 5, 'all panels remain mounted')
+  assert.ok(pageText(root).includes('有未保存的更改'), 'global toolbar retains dirty hint')
+  const modelsTab = tabByName(root, '模型')
+  assert.equal(modelsTab.props.tabIndex, 0)
+  assert.equal(modelsTab.props['aria-controls'], 'dsh-hsp-panel-models')
+  let prevented = false
+  modelsTab.props.onKeyDown({ key: 'End', preventDefault() { prevented = true } })
+  harness.flush()
+  assert.equal(prevented, true)
+  assert.equal(tabByName(root, '高级').props['aria-selected'], true)
+  assert.equal(fakeDocument.activeId, 'dsh-hsp-tab-advanced')
+  tabByName(root, '高级').props.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
+  harness.flush()
+  assert.equal(tabByName(root, '概览').props['aria-selected'], true, 'ArrowRight wraps')
+  tabByName(root, '概览').props.onKeyDown({ key: 'ArrowLeft', preventDefault() {} })
+  harness.flush()
+  assert.equal(tabByName(root, '高级').props['aria-selected'], true, 'ArrowLeft wraps')
+  tabByName(root, '高级').props.onKeyDown({ key: 'Home', preventDefault() {} })
+  harness.flush()
+  assert.equal(tabByName(root, '概览').props['aria-selected'], true)
+  switchTab(harness, root, '记忆与连接')
+  assert.equal(apiUrlInput(root).props.value, 'http://localhost:7788', 'cross-tab draft survives')
+})
+
+test('向量配置按 provider 发送活跃字段；无关保存不覆盖继承 serverEnv', async () => {
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK, tab: '模型' })
+  assert.ok(pageText(root).includes('旧配置继承预览'))
+  switchTab(harness, root, '记忆与连接')
+  change(apiUrlInput(root), 'http://localhost:7777')
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  assert.equal('serverEmbeddings' in JSON.parse(fetchMock.last('/config').body), false, 'unrelated save omits embedding override')
+  const saved = baseStatus()
+  saved.config.values.apiUrl = 'http://localhost:7777'
+  await fetchMock.respond('/config', { payload: { ...saved, saved: ['apiUrl'] } })
+  await harness.settle()
+  switchTab(harness, root, '模型')
+  const provider = hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) => child.kind === 'host' && child.props.value === 'tei'))
+  change(provider, 'onnx')
+  harness.flush()
+  change(inputs(root, 'text').find((n) => n.props.placeholder === 'ONNX 模型 ID'), 'repo/model-id')
+  change(inputs(root, 'number')[0], '768')
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  const body = JSON.parse(fetchMock.last('/config').body)
+  assert.deepEqual(JSON.parse(JSON.stringify(body.serverEmbeddings)), { provider: 'onnx', model: 'repo/model-id', dimensions: 768 })
+  assert.equal(body.configRevision, 'cfg-rev-1')
+  assert.equal(body.guiRevision, 'gui-rev-1')
+  assert.ok(!('serverEnv' in body.serverEmbeddings), 'never overwrite legacy env')
+})
+
+test('向量 Key 只发替换或清除意图；保存完成清理已提交 Key，保存中新输入保留', async () => {
+  const fetchMock = createFetchMock()
+  const status = baseStatus()
+  status.gui.serverEmbeddings = { provider: 'openai', model: 'old-model', baseUrl: 'http://localhost:1234/v1', dimensions: null, apiKeyEnv: '', localForceCpu: null, secretConfigured: true }
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
+  const password = () => inputs(root, 'password').find((n) => n.props.placeholder === '向量 Key（留空保留已存值）')
+  assert.equal(password().props.value, '')
+  assert.ok(pageText(root).includes('已配置本页 Key'))
+  assert.ok(pageText(root).includes('本地免鉴权端点也需由您明确填写非敏感占位值'), 'OpenAI compatible endpoints need an explicit nonempty Key')
+  assert.ok(pageText(root).includes('本页不会自动生成'), 'no dummy Key is generated')
+  change(inputs(root, 'text').find((n) => n.props.placeholder === '向量模型名称'), 'new-model')
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  let body = JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.serverEmbeddings.model, 'new-model')
+  assert.equal('apiKey' in body.serverEmbeddings, false, 'empty key means keep')
+  const saved = baseStatus()
+  saved.gui.serverEmbeddings = { ...status.gui.serverEmbeddings, model: 'new-model' }
+  await fetchMock.respond('/config', { payload: { ...saved, saved: ['serverEmbeddings'] } })
+  await harness.settle()
+  change(password(), 'example-key-not-real')
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  body = JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.serverEmbeddings.apiKey, 'example-key-not-real')
+  assert.equal('secretConfigured' in body.serverEmbeddings, false)
+  change(password(), 'newer-unsaved-example')
+  harness.flush()
+  await fetchMock.respond('/config', { payload: { ...saved, saved: ['serverEmbeddings'] } })
+  await harness.settle()
+  assert.equal(password().props.value, 'newer-unsaved-example', 'new input retained')
+  assert.ok(pageText(root).includes('有未保存的更改'))
+  click(buttonByText(root, '放弃更改'))
+  harness.flush()
+  assert.equal(password().props.value, '')
+  click(buttonByText(root, '清除向量 Key'))
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  body = JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.serverEmbeddings.clearApiKey, true)
+  assert.equal('apiKey' in body.serverEmbeddings, false)
+})
+
+test('tei 仅发 baseUrl，local 三态保留；维度拒绝非正整数', async () => {
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK, tab: '模型' })
+  const provider = () => hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) => child.kind === 'host' && child.props.value === 'tei'))
+  change(provider(), 'onnx'); harness.flush()
+  change(inputs(root, 'number')[0], '1.5'); harness.flush()
+  click(buttonByText(root, '保存')); harness.flush()
+  assert.equal(fetchMock.count('/config'), 0)
+  assert.ok(pageText(root).includes('向量维度必须是正整数'))
+  change(provider(), 'local'); harness.flush()
+  const cpuSelect = hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) => child.kind === 'host' && textOfNode(child) === '默认（不指定）'))
+  assert.equal(cpuSelect.props.value, '', 'local CPU unset state')
+  change(cpuSelect, 'false'); harness.flush()
+  assert.equal(hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) => child.kind === 'host' && textOfNode(child) === '默认（不指定）')).props.value, 'false')
+  change(provider(), 'tei'); harness.flush()
+  change(inputs(root, 'text').find((n) => n.props.placeholder === 'TEI 服务地址'), 'http://localhost:8080'); harness.flush()
+  click(buttonByText(root, '保存'))
+  assert.deepEqual(JSON.parse(JSON.stringify(JSON.parse(fetchMock.last('/config').body).serverEmbeddings)), { provider: 'tei', baseUrl: 'http://localhost:8080' })
+})
+
+test('向量 Provider 分别缓存草稿：OpenAI 参数不串到 TEI/ONNX，切回原草稿', async () => {
+  const status = baseStatus()
+  status.gui.serverEmbeddings = {
+    provider: 'openai', model: 'openai-original', baseUrl: 'https://openai.invalid/v1',
+    dimensions: 1536, apiKeyEnv: 'EXAMPLE_KEY_ENV', localForceCpu: null, secretConfigured: false,
+  }
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
+  const provider = () => hostNodes(root).find((n) => n.tag === 'select'
+    && n.children.some((child) => child.kind === 'host' && child.props.value === 'tei'))
+  const field = (placeholder) => inputs(root).find((n) => n.props.placeholder === placeholder)
+  change(field('向量模型名称'), 'openai-unsaved')
+  change(field('兼容 OpenAI 的 API 地址'), 'https://draft.invalid/v1')
+  change(inputs(root, 'number')[0], '2048')
+  harness.flush()
+  change(provider(), 'tei'); harness.flush()
+  assert.equal(field('TEI 服务地址').props.value, '', 'TEI never inherits OpenAI URL')
+  assert.equal(field('向量模型名称'), undefined, 'TEI has no model field')
+  change(field('TEI 服务地址'), 'http://localhost:8080'); harness.flush()
+  change(provider(), 'onnx'); harness.flush()
+  assert.equal(field('ONNX 模型 ID').props.value, '', 'ONNX never inherits OpenAI model')
+  assert.equal(inputs(root, 'number')[0].props.value, '', 'ONNX never inherits OpenAI dimensions')
+  change(field('ONNX 模型 ID'), 'custom-onnx'); harness.flush()
+  change(provider(), 'tei'); harness.flush()
+  assert.equal(field('TEI 服务地址').props.value, 'http://localhost:8080', 'TEI draft restored')
+  change(provider(), 'openai'); harness.flush()
+  assert.equal(field('向量模型名称').props.value, 'openai-unsaved', 'OpenAI model restored')
+  assert.equal(field('兼容 OpenAI 的 API 地址').props.value, 'https://draft.invalid/v1', 'OpenAI URL restored')
+  assert.equal(inputs(root, 'number')[0].props.value, '2048', 'OpenAI dimensions restored')
+  click(buttonByText(root, '放弃更改')); harness.flush()
+  change(provider(), 'tei'); harness.flush()
+  assert.equal(field('TEI 服务地址').props.value, '', 'discard retires inactive TEI draft')
+  change(provider(), 'openai'); harness.flush()
+  assert.equal(field('向量模型名称').props.value, 'openai-original', 'discard restores saved baseline')
+  assert.ok(!pageText(root).includes('有未保存的更改'))
+})
+
+test('非活跃 Provider 草稿跨轮询保留，不能被无关保存静默丢弃', async () => {
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK, tab: '模型' })
+  const provider = () => hostNodes(root).find((n) => n.tag === 'select'
+    && n.children.some((child) => child.kind === 'host' && child.props.value === 'tei'))
+  change(provider(), 'tei'); harness.flush()
+  change(inputs(root, 'text').find((n) => n.props.placeholder === 'TEI 服务地址'), 'http://localhost:8090'); harness.flush()
+  change(provider(), ''); harness.flush()
+  assert.ok(pageText(root).includes('有未保存的更改'), 'inactive draft still counts as unsaved')
+  switchTab(harness, root, '概览')
+  click(buttonByText(root, '刷新状态'))
+  await fetchMock.respond('/status', { payload: baseStatus() })
+  await harness.settle()
+  switchTab(harness, root, '模型')
+  click(buttonByText(root, '保存')); harness.flush()
+  assert.equal(fetchMock.count('/config'), 0, 'cannot silently discard inactive edited provider on unrelated save')
+  assert.ok(pageText(root).includes('请切回对应 Provider 保存'))
+  change(provider(), 'tei'); harness.flush()
+  assert.equal(inputs(root, 'text').find((n) => n.props.placeholder === 'TEI 服务地址').props.value, 'http://localhost:8090', 'draft survives status poll')
+})
+
+test('向量预览继承凭据不冒充本页存储，保存期间切换 Provider 不重复提交 Key', async () => {
+  const fetchMock = createFetchMock()
+  const status = baseStatus()
+  status.gui.serverEmbeddings = {
+    provider: 'openai', model: 'saved-openai', baseUrl: 'http://localhost:1234/v1',
+    dimensions: null, apiKeyEnv: '', localForceCpu: null, secretConfigured: false,
+  }
+  status.server.embeddingPreview = {
+    provider: 'openai', model: 'saved-openai', baseUrl: 'http://localhost:1234/v1',
+    dimensions: null, credentialSource: 'serverEnv', secretConfigured: true,
+    source: 'serverEnv', mode: 'inherit', note: '环境继承', warnings: [],
+  }
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
+  assert.ok(pageText(root).includes('下次启动凭据已配置（未验证有效性）'))
+  assert.ok(!pageText(root).includes('已配置本页 Key'), 'preview inherited secret is not the stored-page flag')
+  const provider = () => hostNodes(root).find((n) => n.tag === 'select'
+    && n.children.some((child) => child.kind === 'host' && child.props.value === 'tei'))
+  const password = () => inputs(root, 'password').find((n) => n.props.placeholder === '向量 Key（留空保留已存值）')
+  change(password(), 'example-submitted-key'); harness.flush()
+  click(buttonByText(root, '保存'))
+  assert.equal(JSON.parse(fetchMock.last('/config').body).serverEmbeddings.apiKey, 'example-submitted-key')
+  change(provider(), 'tei'); harness.flush()
+  const saved = baseStatus()
+  saved.gui.serverEmbeddings = { ...status.gui.serverEmbeddings, secretConfigured: true }
+  await fetchMock.respond('/config', { payload: { ...saved, saved: ['serverEmbeddings'] } })
+  await harness.settle()
+  change(provider(), 'openai'); harness.flush()
+  assert.equal(password().props.value, '', 'submitted key retired from inactive provider cache')
+  assert.ok(pageText(root).includes('已配置本页 Key'), 'stored flag comes from returned gui value')
+  assert.equal(buttonByText(root, '保存').props.disabled, true, 'clean draft cannot resubmit saved Key')
+  assert.equal(fetchMock.count('/config'), 1, 'no duplicate submission after switching back')
+  change(provider(), 'tei'); harness.flush()
+  change(inputs(root, 'text').find((n) => n.props.placeholder === 'TEI 服务地址'), 'http://localhost:8080')
+  harness.flush()
+  click(buttonByText(root, '保存'))
+  const body = JSON.parse(fetchMock.last('/config').body)
+  assert.deepEqual(JSON.parse(JSON.stringify(body.serverEmbeddings)), { provider: 'tei', baseUrl: 'http://localhost:8080' })
+  const savedTei = baseStatus()
+  savedTei.gui.serverEmbeddings = { ...baseStatus().gui.serverEmbeddings, provider: 'tei', baseUrl: 'http://localhost:8080', secretConfigured: true }
+  await fetchMock.respond('/config', { payload: { ...savedTei, saved: ['serverEmbeddings'] } })
+  await harness.settle()
+  change(provider(), 'openai'); harness.flush()
+  assert.equal(password().props.value, '', 'new baseline never rehydrates submitted Key')
+  assert.equal(inputs(root, 'text').find((n) => n.props.placeholder === '向量模型名称').props.value, '', 'save resets former provider draft cache')
+})
+
+test('聊天模型与 Provider 覆盖折叠不卸载草稿或已输入 Key', async () => {
+  const status = baseStatus()
+  status.gui.providerOverrides = { demo: { provider: 'demo', baseUrl: '', apiKeyEnv: '', secretConfigured: true } }
+  const fetchMock = createFetchMock()
+  const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
+  assert.equal(detailsBySummary(root, '功能模型调用').props.open, true, 'chat route card starts expanded')
+  assert.equal(detailsBySummary(root, 'Provider 覆盖').props.open, false, 'overrides start collapsed')
+  const chatSelect = () => hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) =>
+    child.kind === 'host' && child.tag === 'option' && textOfNode(child).includes('haiku')))
+  assert.ok(chatSelect())
+  change(chatSelect(), 'deepseek/deepseek-chat'); harness.flush()
+  toggleDetails(harness, root, '功能模型调用')
+  assert.equal(chatSelect(), undefined, 'collapsed chat field is not visible')
+  toggleDetails(harness, root, '功能模型调用')
+  assert.equal(chatSelect().props.value, 'deepseek/deepseek-chat', 'chat model edit preserved')
+  toggleDetails(harness, root, 'Provider 覆盖')
+  const password = () => inputs(root, 'password').find((n) => n.props.placeholder === '已保存 Key（输入以替换）')
+  change(password(), 'example-unsaved-override-key'); harness.flush()
+  toggleDetails(harness, root, 'Provider 覆盖')
+  assert.equal(password(), undefined, 'closed override field is not visible')
+  assert.ok(pageText(root).includes('有未保存的更改'), 'sticky toolbar still signals hidden edits')
+  toggleDetails(harness, root, 'Provider 覆盖')
+  assert.equal(password().props.value, 'example-unsaved-override-key', 'unsaved Key survives collapse')
+  click(buttonByText(root, '保存'))
+  const body = JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.providerOverrides.demo.apiKey, 'example-unsaved-override-key')
+  assert.equal(body.surveyModel, 'deepseek/deepseek-chat')
+})
+
+test('向量迁移风险只显示一次，鉴权和依赖警告仍然可见', async () => {
+  const status = baseStatus()
+  status.server.embeddingPreview.warnings = [
+    '更换向量模型可能需要重建或迁移已有向量',
+    '变更维度需重新索引向量数据',
+    'API Key 环境变量缺失',
+    '本地依赖尚未准备',
+  ]
+  const { root } = await mountPage(createFetchMock(), { status, models: MODELS_OK, tab: '模型' })
+  const text = pageText(root)
+  assert.ok(text.includes('更换向量模型或维度可能需要重建/迁移已有向量'), 'mandatory migration notice shown')
+  assert.ok(!text.includes('更换向量模型可能需要重建或迁移已有向量'))
+  assert.ok(!text.includes('变更维度需重新索引向量数据'))
+  assert.ok(text.includes('API Key 环境变量缺失'), 'authentication warning remains')
+  assert.ok(text.includes('本地依赖尚未准备'), 'dependency warning remains')
+})
+
 // ---------------------------------------------------------------------------
 // 8. 运行
 // ---------------------------------------------------------------------------
 let passed = 0
+
+test('真实 Host 状态投影与客户端 CAS 向量保存契约联调（全 IO 隔离）', async () => {
+  const {fixture}=await import('./test-host.mjs')
+  const legacy={HINDSIGHT_API_EMBEDDINGS_PROVIDER:'openai',HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:'legacy-vector',HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:'http://127.0.0.1:1234/v1',HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:'SYNTHETIC_CONTRACT_KEY'}
+  const host=await fixture({gui:{autoStart:false,serverEnv:legacy}})
+  const status=(await host.request('status')).body
+  assert.ok(!JSON.stringify(status).includes('SYNTHETIC_CONTRACT_KEY'))
+  const fetchMock=createFetchMock()
+  const {harness,root}=await mountPage(fetchMock,{status,models:MODELS_OK,tab:'模型'})
+  assert.ok(pageText(root).includes('legacy-vector'))
+  const provider=hostNodes(root).find(n=>n.tag==='select'&&n.children.some(child=>child.kind==='host'&&child.props.value==='tei'))
+  change(provider,'openai');harness.flush()
+  change(inputs(root,'text').find(n=>n.props.placeholder==='向量模型名称'),'new-vector')
+  change(inputs(root,'number')[0],'512');harness.flush()
+  click(buttonByText(root,'保存'));harness.flush()
+  const submitted=JSON.parse(fetchMock.last('/config').body)
+  const saved=await host.request('config',submitted)
+  assert.equal(saved.code,200)
+  assert.ok(saved.body.saved.includes('serverEmbeddings'))
+  await fetchMock.respond('/config',{status:saved.code,payload:saved.body});await harness.settle()
+  assert.equal(inputs(root,'text').find(n=>n.props.placeholder==='向量模型名称').props.value,'new-vector')
+  assert.ok(pageText(root).includes('512'))
+  assert.ok(!pageText(root).includes('有未保存的更改'))
+  assert.deepEqual(JSON.parse(host.files.get(host.guiPath)).serverEnv,legacy)
+  assert.equal(saved.body.server.embeddingPreview.model,'new-vector')
+  assert.equal(saved.body.server.embeddingPreview.dimensions,512)
+  assert.equal(saved.body.gui.serverEmbeddings.secretConfigured,false)
+  assert.equal(saved.body.server.embeddingPreview.secretConfigured,true)
+  assert.ok(!JSON.stringify(saved.body).includes('SYNTHETIC_CONTRACT_KEY'))
+})
+
 let failed = 0
 for (const [name, fn] of tests) {
   try {
