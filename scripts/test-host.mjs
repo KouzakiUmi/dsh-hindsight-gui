@@ -15,7 +15,7 @@ export async function fixture(options = {}) {
   files.set(configPath, JSON.stringify(options.config ?? { apiUrl: 'http://127.0.0.1:8888' }))
   files.set(guiPath, JSON.stringify(options.gui ?? {}))
   const listeners = new Map()
-  const identities = new Map()
+  const identities = new Map([[123, { pid: 123, executable: '/fixture/dsh.exe', started: '2026-10-13T08:00:00Z' }]])
   const children = new Map()
   const writes = []
   const commands = []
@@ -60,6 +60,14 @@ export async function fixture(options = {}) {
         else {
           identities.set(child.pid, { pid: child.pid, executable: '/fixture/api.exe', started: 'identity-'+child.pid })
           listeners.set(Number(args.at(-1)), options.launcher ? child.pid + 1 : child.pid)
+          if (options.descendant) {
+            const middle = child.pid + 1000
+            const listener = child.pid + 2000
+            identities.set(middle, { pid: middle, parentPid: child.pid, executable: '/fixture/python-launcher.exe', started: '2026-10-13T09:00:01Z' })
+            identities.set(listener, { pid: listener, parentPid: middle, executable: '/fixture/python.exe', started: '2026-10-13T09:00:02Z' })
+            identities.get(child.pid).started = '2026-10-13T09:00:00Z'
+            listeners.set(Number(args.at(-1)), listener)
+          }
           children.set(child.pid, child)
         }
         return child
@@ -68,7 +76,9 @@ export async function fixture(options = {}) {
       const child = new EventEmitter()
       child.stdout = new EventEmitter()
       child.kill = () => {}
-      queueMicrotask(() => {
+      if (options.hangQuery === command) return child // kill deliberately emits no close.
+      queueMicrotask(async () => {
+        if (options.beforeQuery) await options.beforeQuery(command, args)
         let text = ''
         let code = 0
         if (command === 'netstat') {
@@ -117,7 +127,7 @@ export async function fixture(options = {}) {
   ]
   for (const [before, after] of substitutions) { assert.ok(source.includes(before), 'mock boundary changed'); source = source.replace(before, after) }
   source = 'const process = globalThis.__hostFixture.process;\n'+source+
-    '\nexport { redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
+    '\nexport { redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, execCapture, ownsProcess, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
   const m = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
   const state = m.createServerState()
   const ctx = {
@@ -233,7 +243,7 @@ await test('PID reuse, unknown process identity and listener replacement are not
   const f=await fixture()
   await f.m.startServer(gui,config,f.state,f.ctx)
   f.identities.get(f.state.managedPid).started='different-start'
-  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/不属于/)
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/非本插件|不属于/)
   assert.ok(!f.commands.some(c=>c.command==='taskkill'))
   f.setFailQuery(true)
   const view=await f.m.ownershipView(f.state,f.m.apiTarget(config))
@@ -281,6 +291,96 @@ await test('health timeout retains live child and blocks duplicate start', async
   await assert.rejects(f.m.startServer(gui,config,f.state,f.ctx),/存活/)
   assert.equal(f.launches.length,1)
 })
+await test('verified two-level Windows launcher descendants are managed and restartable', async () => {
+  const f = await fixture({descendant:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  assert.notEqual(f.state.managedPid,f.state.child.pid)
+  assert.equal((await f.m.ownershipView(f.state,f.m.apiTarget(config))).ownership,'managed')
+  const oldPid = f.state.managedPid
+  await f.m.restartServer(gui,config,f.state,f.ctx)
+  assert.deepEqual(f.commands.find(c=>c.command==='taskkill').args,['/PID',String(oldPid)])
+  assert.equal(f.launches.length,2)
+  const currentPid = f.state.managedPid
+  f.launches[0].child.emit('exit',0,null)
+  assert.equal(f.state.managedPid,currentPid,'late launcher exit cannot clear the replacement')
+})
+await test('a new DSH PID recovers the exact listener receipt, even after reparenting', async () => {
+  const f = await fixture({descendant:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const listener = f.state.managedPid
+  const snapshot = f.state.runningConfig
+  f.identities.delete(123)
+  f.identities.delete(f.state.child.pid)
+  f.identities.get(listener).parentPid = 1
+  globalThis.__hostFixture.process.pid = 124
+  f.identities.set(124,{pid:124,executable:'/fixture/dsh.exe',started:'2026-10-13T10:00:00Z'})
+  const recovered = f.m.createServerState()
+  const view = await f.m.ownershipView(recovered,f.m.apiTarget(config))
+  assert.equal(view.ownership,'managed')
+  assert.equal(view.canRestart,true)
+  assert.equal(recovered.managedPid,listener)
+  assert.deepEqual(recovered.runningConfig,snapshot)
+  assert.ok(!JSON.stringify([...f.files.values()]).includes(SECRET))
+  await f.m.restartServer(gui,config,recovered,f.ctx)
+  assert.equal(f.launches.length,2)
+})
+await test('receipts reject reused PID, foreign listener and a still-live other manager', async () => {
+  const f = await fixture()
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const oldPid = f.state.managedPid
+  globalThis.__hostFixture.process.pid = 124
+  f.identities.set(124,{pid:124,executable:'/fixture/dsh.exe',started:'2026-10-13T10:00:00Z'})
+  const contested = await f.m.ownershipView(f.m.createServerState(),f.m.apiTarget(config))
+  assert.equal(contested.ownership,'unknown')
+  assert.match(contested.ownershipError,/另一个存活/)
+  f.identities.delete(123)
+  f.identities.get(oldPid).started = 'reused-pid'
+  assert.equal((await f.m.ownershipView(f.m.createServerState(),f.m.apiTarget(config))).ownership,'unmanaged')
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+})
+await test('query timeout settles even when kill never emits close', async () => {
+  const f = await fixture({hangQuery:'netstat'})
+  // Keep the test runner alive; production has the HTTP request/host event loop.
+  const keepAlive = setTimeout(()=>{},100)
+  try { await assert.rejects(f.m.execCapture('netstat',[],5),/超时/) }
+  finally { clearTimeout(keepAlive) }
+})
+await test('late identity polling cannot erase a replacement launch', async () => {
+  let block = null
+  let entered = null
+  const f = await fixture({beforeQuery:async (command,args) => {
+    if (block && command === 'powershell.exe' && /ProcessId = 401/.test(args.at(-1))) {
+      entered()
+      await block
+    }
+  }})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  let release
+  block = new Promise(resolve => { release = resolve })
+  const waiting = new Promise(resolve => { entered = resolve })
+  const query = f.m.ownsProcess(f.state)
+  await waiting
+  const replacement = {pid:999,executable:'/fixture/api.exe',started:'replacement'}
+  f.state.identity = replacement
+  f.state.managedPid = 999
+  f.state.runningConfig = {fingerprint:'replacement'}
+  release()
+  assert.equal(await query,false)
+  assert.equal(f.state.managedPid,999)
+  assert.equal(f.state.exited,false)
+  assert.equal(f.state.runningConfig.fingerprint,'replacement')
+})
+await test('late health confirmation retains the original launch fingerprint', async () => {
+  const f = await fixture()
+  f.setHealth(false)
+  await assert.rejects(f.m.startServer(gui,config,f.state,f.ctx),/超时/)
+  f.files.set(f.guiPath,JSON.stringify({...gui,auditLogEnabled:true}))
+  f.setHealth(true)
+  const status = await f.m.collect(f.ctx,f.state)
+  assert.equal(status.server.runtimeConfigKnown,true)
+  assert.equal(status.server.pendingRestart,true)
+  assert.equal(status.server.runningConfig.auditLogEnabled,false)
+})
 await test('simultaneous service actions are fenced and dispose revokes ownership', async () => {
   const f=await fixture({gui})
   const running=f.m.runServerAction('start',f.state,f.ctx)
@@ -290,7 +390,7 @@ await test('simultaneous service actions are fenced and dispose revokes ownershi
   f.state.disposed=true; f.state.controller.abort(); f.state.identity=null
   await assert.rejects(f.m.runServerAction('restart',f.state,f.ctx),/卸载/)
   const foreign=f.m.createServerState()
-  assert.equal((await f.m.ownershipView(foreign,f.m.apiTarget(config))).ownership,'unmanaged')
+  assert.equal((await f.m.ownershipView(foreign,f.m.apiTarget(config))).ownership,'managed')
 })
 await test('corrupt config is reported and never overwritten', async () => {
   const f=await fixture()

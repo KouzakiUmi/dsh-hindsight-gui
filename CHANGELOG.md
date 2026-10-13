@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-13
+
+### Fixed
+
+- Verify Windows uv/pip launcher ancestry instead of requiring the listening Python process to have the direct launcher's PID. Unrelated listeners are still never adopted or terminated.
+- Persist a credential-free ownership receipt and launch snapshot beside the GUI configuration. After DSH restarts, revalidate the service PID, OS start time and executable path before restoring management; do not contest another live DSH manager or trust a reused PID. Legacy services without a receipt require a manual shutdown and a fresh plugin launch.
+- Settle system-command timeouts without waiting indefinitely for a `close` event after termination. Bound browser status requests to 30 seconds and service-action requests to 180 seconds, refresh after failures, and prevent overlapping slow polls or late responses from restoring a stale “启动中” state.
+- Preserve service identity after health-check timeout and confirm late readiness against the original launch configuration. Late identity queries and launcher exit events cannot erase a replacement process; serialize ownership-receipt writes.
+
+### Tests
+
+- 47 offline Host and 28 offline Client regressions pass, including a two-level Windows launcher chain, recovery under a different DSH PID, PID reuse, live-manager contention, hanging queries/requests, late responses and disposal. The client bundle and manifest/syntax checks pass; this does not replace live deployment acceptance.
+
 ## [1.3.0] - 2026-10-12
 
 ### Added

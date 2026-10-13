@@ -340,6 +340,27 @@ function ModelSelectField(props) {
   )
 }
 
+/** Bound both fetch and body parsing; abort/unmount must settle even if transport stalls. */
+function requestJson(url, init, timeoutMs, requests) {
+  const controller = new AbortController()
+  requests.add(controller)
+  let timer
+  const cancelled = new Promise((_, reject) => {
+    controller.signal.addEventListener('abort', () => reject(new Error('请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')), { once: true })
+    timer = setTimeout(() => controller.abort(), timeoutMs)
+  })
+  const response = fetch(url, { ...init, signal: controller.signal }).then(async (res) => {
+    const payload = await res.json()
+    if (!res.ok) throw new Error(payload?.error ?? `HTTP ${res.status}`)
+    if (payload === null || typeof payload !== 'object') throw new Error('响应格式无效')
+    return payload
+  })
+  return Promise.race([response, cancelled]).finally(() => {
+    clearTimeout(timer)
+    requests.delete(controller)
+  })
+}
+
 /**
  * The settings page.
  * @returns the page element.
@@ -403,6 +424,8 @@ function PanelPage() {
   const defenseGenRef = useRef(0)
   /** Generation counters: a slow/late response must never overwrite a newer one. */
   const statusGenRef = useRef(0)
+  const statusInFlightRef = useRef(null)
+  const requestsRef = useRef(new Set())
   const modelsGenRef = useRef(0)
   /** Flipped on unmount; every async continuation bails out afterwards. */
   const mountedRef = useRef(true)
@@ -415,12 +438,9 @@ function PanelPage() {
 
   const load = useCallback(() => {
     const generation = ++statusGenRef.current
+    statusInFlightRef.current = generation
     setStatus((previous) => ({ ...previous, loading: true, error: null }))
-    fetch(STATUS_URL, { headers: { accept: 'application/json' } })
-      .then((response) => {
-        if (!response.ok) throw new Error('HTTP ' + String(response.status))
-        return response.json()
-      })
+    requestJson(STATUS_URL, { headers: { accept: 'application/json' } }, 30000, requestsRef.current)
       .then((data) => {
         if (!mountedRef.current || generation !== statusGenRef.current) return
         setStatus({ loading: false, data, error: null })
@@ -429,6 +449,7 @@ function PanelPage() {
         if (!mountedRef.current || generation !== statusGenRef.current) return
         setStatus((previous) => ({ loading: false, data: previous.data, error: String(error?.message ?? error) }))
       })
+      .finally(() => { if (statusInFlightRef.current === generation) statusInFlightRef.current = null })
   }, [])
 
   const loadModels = useCallback(() => {
@@ -463,13 +484,18 @@ function PanelPage() {
   /** Unmount guard: async continuations check this before touching any state. */
   useEffect(() => {
     mountedRef.current = true
-    return () => { mountedRef.current = false }
+    return () => {
+      mountedRef.current = false
+      for (const controller of requestsRef.current) controller.abort()
+    }
   }, [])
 
   /** Poll status while the page is open and visible. */
   useEffect(() => {
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      // A slow status query must finish instead of being superseded every 15s.
+      if (statusInFlightRef.current !== null) return
       load()
     }, 15000)
     return () => clearInterval(timer)
@@ -693,19 +719,15 @@ function PanelPage() {
     if (Date.now() < autoStartCooldownRef.current) return
     autoStartCooldownRef.current = Date.now() + 45000
     setServerBusy('start')
-    fetch(SERVER_START_URL, {
+    requestJson(SERVER_START_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: '{}',
-    })
-      .then(async (res) => {
-        const payload = await res.json().catch(() => null)
-        if (!res.ok) throw new Error(payload?.error ?? `HTTP ${res.status}`)
-        return payload
-      })
+    }, 180000, requestsRef.current)
       .then((payload) => {
         if (!mountedRef.current) return
         autoStartFailuresRef.current = 0
+        statusGenRef.current += 1
         setStatus({ loading: false, data: payload.status, error: null })
         setServerError(null)
         setServerMessage(payload.alreadyRunning === true ? '服务已在运行。' : '已自动启动 Hindsight 服务。')
@@ -718,6 +740,7 @@ function PanelPage() {
           '自动启动失败：' + String(error?.message ?? error)
           + (stopped ? ' 已停止自动重试，请处理问题后手动启动。' : ' 稍后将自动重试。'),
         )
+        load()
       })
       .finally(() => { if (mountedRef.current) setServerBusy(null) })
   }, [status.data, status.error, serverBusy])
@@ -951,16 +974,11 @@ function PanelPage() {
       setServerBusy(action)
       setServerMessage(null)
       setServerError(null)
-      fetch(action === 'restart' ? SERVER_RESTART_URL : SERVER_START_URL, {
+      requestJson(action === 'restart' ? SERVER_RESTART_URL : SERVER_START_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: '{}',
-      })
-        .then(async (res) => {
-          const payload = await res.json().catch(() => null)
-          if (!res.ok) throw new Error(payload?.error ?? `HTTP ${res.status}`)
-          return payload
-        })
+      }, 180000, requestsRef.current)
         .then((payload) => {
           if (!mountedRef.current) return
           autoStartFailuresRef.current = 0
@@ -1045,10 +1063,10 @@ function PanelPage() {
   // `ownership`/`can*` fields — for them keep the old permissive behaviour.
   const ownership = server ? server.ownership : undefined
   const legacyHost = server !== null && ownership === undefined
-  const canStartNow = legacyHost ? api?.up !== true : server?.canStart === true
+  const canStartNow = status.error === null && (legacyHost ? api?.up !== true : server?.canStart === true)
   // A restart kills whatever listens on the port; without the host's ownership
   // verdict (legacy host) that could be someone else's process — default deny.
-  const canRestartNow = legacyHost ? false : server?.canRestart === true
+  const canRestartNow = status.error === null && !legacyHost && server?.canRestart === true
   const operationInFlight = serverBusy !== null || (server !== null && server.operation != null)
 
   /**
@@ -1140,10 +1158,10 @@ function PanelPage() {
             <h3 className={PREFIX + 'cardtitle'}>服务管理</h3>
             <div className={PREFIX + 'actions'}>
               <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canStartNow} onClick={() => serverAction('start')}>
-                {server.operation === 'start' || serverBusy === 'start' ? '启动中…' : '启动服务'}
+                {serverBusy === 'start' || (status.error === null && server.operation === 'start') ? '启动中…' : '启动服务'}
               </button>
               <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>
-                {server.operation === 'restart' || serverBusy === 'restart' ? '重启中…' : '重启服务'}
+                {serverBusy === 'restart' || (status.error === null && server.operation === 'restart') ? '重启中…' : '重启服务'}
               </button>
             </div>
           </div>

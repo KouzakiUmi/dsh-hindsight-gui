@@ -26,9 +26,9 @@ This plugin is a **dashboard for the memory system**: it shows and adjusts that 
 
 ### 你需要自己部署 Hindsight
 
-**本插件不会安装或部署 Hindsight。** 它可连接现有 API；对于已安装的本机 `hindsight-api`，也可由插件启动，并仅在确认属于当前 Cordis effect 所启动的直接子进程时尝试停止/重启。远端、HTTPS、IPv6 和非根路径地址可连接并调用服务 API，但不支持本机进程管理；库策略写入仍须通过目标校验并由上游服务允许。使用顺序是：
+**本插件不会安装或部署 Hindsight。** 它可连接现有 API；对于已安装的本机 `hindsight-api`，也可由插件启动，并仅在核验启动进程链或本插件留下的持久归属记录后尝试停止/重启。远端、HTTPS、IPv6 和非根路径地址可连接并调用服务 API，但不支持本机进程管理；库策略写入仍须通过目标校验并由上游服务允许。使用顺序是：
 
-**This plugin does not install or deploy Hindsight.** It can connect to an existing API, or launch an already-installed local `hindsight-api`. Stop/restart is restricted to a verified direct child of the current Cordis effect; remote, HTTPS, IPv6 and non-root-path URLs remain connectable but their processes cannot be managed locally; bank-policy writes require target checks and upstream permissions. The order is:
+**This plugin does not install or deploy Hindsight.** It can connect to an existing API, or launch an already-installed local `hindsight-api`. Stop/restart requires a verified launch process chain or this plugin's revalidated persistent ownership receipt; remote, HTTPS, IPv6 and non-root-path URLs remain connectable but their processes cannot be managed locally; bank-policy writes require target checks and upstream permissions. The order is:
 
 1. **先准备 Hindsight** — 按 [官方文档](https://hindsight.vectorize.io/) 自行部署可连接的 API，或自行安装本机 `hindsight-api` 可执行文件供插件启动；插件不安装依赖。
 
@@ -145,7 +145,9 @@ The **向量模型** card in the 模型 category configures Hindsight's own vect
 
 插件自带受控的本机服务管理；本页保存的设置是下次插件启动的输入，不代表外部服务已经采用这些设置：
 
-- **启动 / 重启按钮**：host 查找已安装的 `hindsight-api`（`serverCommand` → `PATH` → 常见 uv/pip 位置），启动后轮询 `/health`（最长 90 秒）。仅当前 Cordis effect 保留的直接 ChildProcess 且 PID、操作系统启动时间与可执行路径核验一致时可尝试重启；端口占用不授予终止权限。监听 PID 不同则安全拒绝。Windows 仅使用不带 `/F` 的 `taskkill /PID` 温和尝试，失败须手动关闭，没有强制回退。热重载后旧服务可能仍存活，但新插件实例将其视为 unmanaged。
+- **启动 / 重启按钮**：host 查找已安装的 `hindsight-api`（`serverCommand` → `PATH` → 常见 uv/pip 位置），启动后轮询 `/health`（90 秒启动检查窗口）。Windows uv/pip 启动器与 Python 监听进程可有不同 PID；插件沿父进程链核验到原启动器的 PID、操作系统启动时间与可执行路径，而非仅凭端口或程序名称接管。Windows 仅使用不带 `/F` 的 `taskkill /PID` 温和尝试，失败须手动关闭，没有强制回退。
+- **DSH 重启后恢复管理**：插件在 GUI 配置路径后追加 `.server.json` 保存归属记录和不含密钥的启动快照。新实例重新核验服务 PID、启动时间和可执行路径；旧 DSH 仍存活时不会争抢。PID 被复用、记录损坏或无记录的外部实例不会自动接管。旧版已遗留且无记录的服务需用户手动关闭，再由新版插件首次启动生成记录；本页不自动迁移或追认它。
+- **有界等待与迟到就绪**：系统查询超时直接结束等待，不依赖杀掉查询子进程后一定出现 `close`。浏览器状态请求最长等待 30 秒，启动/重启请求最长等待 180 秒（包含预检与状态汇总）；失败主动刷新，慢轮询不会被每 15 秒的新请求挤掉。超时不等于服务已退出，插件保留身份记录以防重复启动；后续状态确认健康时使用原启动快照，而不是冒称已应用新保存的配置。
 - **自动启动**：开启后页面可请求 host 拉起未运行、且可管理的本机 API（45 秒冷却）；第三方实例不会被接管。
 - **凭据解析链**：设置页 Provider 覆盖（Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → `ctx.credentials.resolve` 宿主凭据服务；不直接扫描凭据 YAML。状态仅显示来源或失败原因，不返回密钥。
 - **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。

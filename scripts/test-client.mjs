@@ -199,8 +199,10 @@ function createHarness() {
       }
     },
     async settle() {
-      for (let i = 0; i < 8; i++) {
-        await Promise.resolve()
+      // Drain the whole microtask queue, including Promise.race/finally chains,
+      // rather than assuming each request has at most eight continuations.
+      for (let i = 0; i < 2; i++) {
+        await new Promise(resolve => setImmediate(resolve))
         this.flush()
       }
     },
@@ -324,10 +326,10 @@ const fakeDocument = {
   head: { appendChild() {} },
 }
 
-function loadModule(harness, fetchMock) {
+function loadModule(harness, fetchMock, clock = {}) {
   const sandbox = {
-    console, fetch: fetchMock, document: fakeDocument,
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    console, fetch: fetchMock, document: fakeDocument, AbortController,
+    setTimeout, clearTimeout, setInterval, clearInterval, ...clock,
     Date, URL, Promise, JSON, Math, Object, Array, Set, Map, Symbol, String, Number, Boolean,
     Error, TypeError, RangeError, RegExp, Reflect, Proxy,
     encodeURIComponent, decodeURIComponent, parseInt, parseFloat, isNaN, NaN,
@@ -379,9 +381,9 @@ function baseStatus(over = {}) {
   return Object.assign(status, over)
 }
 
-async function mountPage(fetchMock, { status, models, tab = '记忆与连接' } = {}) {
+async function mountPage(fetchMock, { status, models, tab = '记忆与连接', clock } = {}) {
   const harness = createHarness()
-  const mod = loadModule(harness, fetchMock)
+  const mod = loadModule(harness, fetchMock, clock)
   let Page = null
   const ctx = {
     slots: {
@@ -400,6 +402,23 @@ async function mountPage(fetchMock, { status, models, tab = '记忆与连接' } 
 }
 
 const MODELS_OK = { providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat' }] }], errors: [], state: 'ok', sampledAt: '2026-10-12T17:00:00Z' }
+
+function fakeClock() {
+  let id = 0
+  const timeouts = new Map()
+  const intervals = new Map()
+  return {
+    setTimeout(fn, ms) { const key = ++id; timeouts.set(key, { fn, ms }); return key },
+    clearTimeout(key) { timeouts.delete(key) },
+    setInterval(fn, ms) { const key = ++id; intervals.set(key, { fn, ms }); return key },
+    clearInterval(key) { intervals.delete(key) },
+    expire(ms) {
+      for (const [key, timer] of [...timeouts]) if (timer.ms === ms) { timeouts.delete(key); timer.fn() }
+    },
+    poll() { for (const timer of intervals.values()) timer.fn() },
+    pending() { return timeouts.size + intervals.size },
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 7. 用例
@@ -787,6 +806,87 @@ test('auto-start：仅本机、无 inflight、非 unknown 且 host 确认端口�
   const m6 = await mountPage(f6, { status: s6, models: MODELS_OK })
   await m6.harness.settle()
   assert.equal(f6.count('/server/start'), 0, 'legacy host: no auto-start while API up')
+})
+
+test('启动请求永久挂起也会超时收尾；刷新失败不把旧 operation 显示成无限启动', async () => {
+  const fetchMock = createFetchMock()
+  const clock = fakeClock()
+  const stopped = baseStatus()
+  Object.assign(stopped.server, { ownership: 'stopped', canStart: true, canRestart: false, runningConfig: null })
+  stopped.api.up = false
+  const { harness, root } = await mountPage(fetchMock, { status: stopped, models: MODELS_OK, tab: '概览', clock })
+  click(buttonByText(root, '启动服务'))
+  await harness.settle()
+  assert.ok(buttonByText(root, '启动中…'))
+  click(buttonByText(root, '刷新状态'))
+  const starting = baseStatus()
+  Object.assign(starting.server, { operation: 'start', canRestart: false, canStart: false })
+  await fetchMock.respond('/status', { payload: starting })
+  await harness.settle()
+  clock.expire(180000) // fetch ignores AbortSignal entirely: the race must still settle.
+  await harness.settle()
+  assert.ok(pageText(root).includes('请求超时或已取消'))
+  await fetchMock.respond('/status', { status: 503, payload: { error: 'host unavailable' } })
+  await harness.settle()
+  assert.equal(buttonByText(root, '启动中…'), undefined)
+  assert.equal(buttonByText(root, '启动服务').props.disabled, true, 'unknown state cannot authorize another launch')
+  await fetchMock.respond('/server/start', { payload: { ok: true, status: baseStatus() } })
+  await harness.settle()
+  assert.ok(!pageText(root).includes('服务已启动。'), 'late timed-out response cannot claim success')
+  harness.unmount(root)
+  await harness.settle()
+  assert.equal(clock.pending(), 0)
+})
+
+test('慢轮询不会每15秒被新 generation 饿死；卸载取消所有受控请求', async () => {
+  const fetchMock = createFetchMock()
+  const clock = fakeClock()
+  const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK, tab: '概览', clock })
+  clock.poll()
+  clock.poll()
+  clock.poll()
+  assert.equal(fetchMock.count('/status'), 2, 'only one in-flight poll')
+  const changed = baseStatus()
+  changed.server.operation = 'start'
+  await fetchMock.respond('/status', { payload: changed })
+  await harness.settle()
+  assert.ok(buttonByText(root, '启动中…'), 'slow but current response is applied')
+  clock.poll()
+  assert.equal(fetchMock.count('/status'), 3, 'poll resumes after settlement')
+  harness.unmount(root)
+  await harness.settle()
+  assert.equal(clock.pending(), 0, 'unmount clears request deadlines and polling')
+})
+
+test('自动启动完成后迟到轮询不能恢复启动中；自动启动失败主动刷新状态', async () => {
+  const fetchMock = createFetchMock()
+  const clock = fakeClock()
+  const stopped = baseStatus()
+  Object.assign(stopped.server, { ownership: 'stopped', canStart: true, canRestart: false, runningConfig: null })
+  stopped.gui.autoStart = true
+  stopped.api.up = false
+  const { harness, root } = await mountPage(fetchMock, { status: stopped, models: MODELS_OK, tab: '概览', clock })
+  clock.poll()
+  await fetchMock.respond('/server/start', { payload: { ok: true, status: baseStatus() } })
+  await harness.settle()
+  const stale = baseStatus()
+  stale.server.operation = 'start'
+  await fetchMock.respond('/status', { payload: stale })
+  await harness.settle()
+  assert.equal(buttonByText(root, '启动中…'), undefined)
+  harness.unmount(root)
+  await harness.settle()
+  assert.equal(clock.pending(), 0)
+
+  const failed = createFetchMock()
+  const secondClock = fakeClock()
+  const second = await mountPage(failed, { status: stopped, models: MODELS_OK, tab: '概览', clock: secondClock })
+  await failed.respond('/server/start', { status: 502, payload: { error: 'synthetic failure' } })
+  await second.harness.settle()
+  assert.equal(failed.count('/status'), 2, 'failure explicitly refreshes, without waiting for next poll')
+  second.harness.unmount(second.root)
+  await second.harness.settle()
+  assert.equal(secondClock.pending(), 0)
 })
 
 test('dirty 时服务操作先保存再执行', async () => {
