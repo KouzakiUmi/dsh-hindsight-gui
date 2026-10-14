@@ -7,6 +7,8 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { gunzipSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BANK_FIELDS, MEMORY_FIELDS, READ_OPERATIONS, WRITE_OPERATIONS } from '../lib/management-contracts.js'
+import { createPreviewManagement } from './ui-management-fixture.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 async function get(url) {
@@ -42,6 +44,7 @@ const [react, reactDom, client] = await Promise.all([
   readFile(join(root, 'lib', 'client.js'), 'utf8'),
 ])
 const initial = {
+  management: { protocolVersion: 1 },
   sampledAt: new Date().toISOString(),
   api: { url: 'http://127.0.0.1:8888', up: true, state: 'ok', status: 'healthy', database: '模拟 PostgreSQL', error: null },
   controlPlane: { url: 'http://127.0.0.1:9999', up: true },
@@ -59,17 +62,28 @@ const initial = {
       credentialSource: '模拟环境引用（非真实凭据）', secretConfigured: true, source: 'file', mode: 'override',
       note: '下次本插件启动时应用；此页面使用模拟状态，不连接真实服务。',
       warnings: ['更换向量模型或维度可能需要重建/迁移已有向量索引，本页不会执行迁移。'] } },
-  banks: [{ id: 'preview-bank', name: '模拟记忆库', facts: 128, updatedAt: null }], banksError: null,
+  banks: [
+    { id: 'preview-bank', name: '界面与交互测试', facts: 128, updatedAt: null },
+    { id: 'coding-agent::very-long-project-name-for-narrow-panel-validation', name: '长名称项目 · 仅用于窄屏换行验证', facts: null, updatedAt: null },
+  ], banksError: null,
 }
 const setup = `
 let state=${JSON.stringify(initial)};
 window.__previewCalls=[];
+const bankPolicies=new Map();
+const managementPreview=(${createPreviewManagement.toString()})(state,${JSON.stringify(BANK_FIELDS)},${JSON.stringify(MEMORY_FIELDS)},${JSON.stringify([...READ_OPERATIONS,...WRITE_OPERATIONS])});
 window.fetch=async (url,init={})=>{
   const path=String(url); window.__previewCalls.push({path,method:init.method||'GET'});
   let payload;
+  if(path.includes('/manage')) return managementPreview(path,init);
   if(path.endsWith('/status')) payload=state;
   else if(path.endsWith('/models')) payload={providers:[{id:'demo',name:'示例路由（非真实服务）',models:[{id:'sample',name:'示例对话模型'}]}],errors:[],state:'ok',sampledAt:state.sampledAt};
-  else if(path.includes('/bankdefense')) payload={bank:'preview-bank',memoryDefense:{enabled:false,rules:[]}};
+  else if(path.includes('/bankdefense')) {
+    const body=JSON.parse(init.body||'{}');
+    const bank=init.method==='POST'?body.bankId:new URL(path,'http://preview.invalid').searchParams.get('bank');
+    if(init.method==='POST') bankPolicies.set(bank,{enabled:body.enabled===true,rules:body.enabled?[{on:'sensitive_data',action:'redact'}]:[]});
+    payload={bank,memoryDefense:bankPolicies.get(bank)||{enabled:false,rules:[]}};
+  }
   else if(path.endsWith('/config')) {
     const body=JSON.parse(init.body||'{}');
     Object.assign(state.config.values,Object.fromEntries(Object.entries(body).filter(([key])=>key in state.config.values)));
@@ -86,6 +100,11 @@ window.fetch=async (url,init={})=>{
   } else return {ok:false,status:409,json:async()=>({error:'离线预览禁止启动/重启进程或访问外部端点'})};
   return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(payload))};
 };
+// The preview's Control Plane link must not navigate to a real loopback service.
+document.addEventListener('click',event=>{
+  const anchor=event.target instanceof Element?event.target.closest('a'):null;
+  if(anchor){event.preventDefault();window.__previewCalls.push({path:anchor.href,method:'BLOCKED_NAVIGATION'});}
+});
 const jsx=(type,props,key)=>React.createElement(type,key===undefined?props:{...props,key});
 window.__ModuleLoader__={load({factory}){
   const client=factory(id=>id==='react'?React:id==='react/jsx-runtime'?{jsx,jsxs:jsx,Fragment:React.Fragment}:(()=>{throw new Error('Unexpected preview dependency '+id)})());

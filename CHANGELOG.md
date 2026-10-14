@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-14
+
+### Added
+
+- Add a feature-gated management surface: deployment diagnostics and bound API credential references; operation paging/details/retry/cancel/delete; revision-checked bank overrides and inheritance; global/DSH memory privacy and cost settings; prompt preview, charged extraction dry-run and optional LLM health checks; asynchronous ZIP export/import/clone and aliases.
+- Require typed-resource/risk/cost confirmation and a Host-issued two-minute one-use intent token for management mutations, charged calls, backups and downloads. Enforce actual OpenAPI methods, deployment flags, same-origin loopback and target/credential continuity.
+- Bound ZIP upload to 50MiB with SHA-256/magic validation; bound same-origin streamed export download to 500MiB. Report 202 as submitted and poll against the URL/source bank. Never automatically replay an ambiguous mutation.
+
+### Fixed
+
+- Stop claiming cached memory configuration is applied on the next turn or that saving disabled immediately stops an existing workspace. Surface the official adapter's reinitialization requirement; API restart is not DSH adapter restart.
+- Align autoUpdate/codebaseSurvey defaults and explicit dynamicBankId=false with the official contract; submit only changed base/GUI fields, so unrelated saves do not materialize inherited values or overwrite masked endpoint projections.
+- Separate global default LLM and reflect scoped environment variables. Preserve legacy reflect-only global intent until a default key is explicit, while reflect still replaces old scoped settings.
+- Preserve inactive embedding drafts after an active backend save; keep an explicit unsaved indicator. Treat surveyModel as an external runner identifier, not a DSH provider/model choice.
+
+- Wrap bank Memory Defense PATCH requests in the required `updates` object (`{updates: {memory_defense: policy}}`). The previous flat request omitted the running API's required BankConfigUpdate field and failed with HTTP 422.
+- Make the offline bank-config mock enforce the real request envelope. Cover rejection of the old flat body, enabling/disabling redaction, preservation of stronger/custom rules, confidential upstream validation inputs, and client rollback after HTTP 422.
+- Bound model discovery, configuration saves and Memory Defense reads/writes; preserve drafts after ambiguous saves, require policy re-reads after ambiguous writes, and expose an explicit read-only retry. Reject incomplete successful responses instead of pretending settings or policies were confirmed.
+- Preserve bare model IDs as visible custom input, fence concurrent saves, apply ownership/preflight gates to failed-start retries, and avoid authorizing service actions from a status query still in flight.
+- Distinguish inherited audit settings from explicit on/off; allow an explicit `null` override to return to the launch environment.
+
+### Changed
+
+- Retain five categories and the shared save bar while adding a compact status header, category descriptions, collapsible launch details/options, clearer saved/runtime previews, per-category dirty markers, named controls and error/status announcements.
+- Add bank name/ID search, readable unknown fact counts, immediate-write guidance and wrapping policy-error rows. Adapt fields to the actual host pane width, not only the viewport; host theme selection overrides OS dark preference.
+- Extend the existing synthetic preview and add a dependency-free isolated Chromium acceptance script for screenshots, keyboard focus, bank search, synthetic policy writes, sticky save controls and narrow-pane/theme checks. No live DSH/profile or bank configuration is used.
+
+### Tests
+
+- 189 offline regressions pass (53 Host, 40 Client, 12 management runtime, 7 route gateway, 44 management service, 33 transfer). Build, manifest/syntax and diff checks pass.
+- Isolated Chromium 154 verifies light/dark theme, 390px viewport, 450px host pane, keyboard focus, mandatory confirmations, synthetic settings/bank updates, prompt/dry-run, aliases, ZIP import, clone, async export polling and Blob download. These results do not claim live model inference, migration or process-management acceptance.
+
 ## [1.3.1] - 2026-10-13
 
 ### Fixed

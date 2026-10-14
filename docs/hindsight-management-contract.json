@@ -1,0 +1,4891 @@
+{
+  "source": "target OpenAPI, public schema only; no bank/config/credential values",
+  "capturedAt": "2026-10-13T12:26:54.241Z",
+  "info": {
+    "title": "Hindsight HTTP API",
+    "description": "HTTP API for Hindsight",
+    "contact": {
+      "name": "Memory System"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "0.10.2"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Health check endpoint",
+        "description": "Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes — this one fails whenever the database is unreachable, which must gate traffic, not restart the process.",
+        "operationId": "health_endpoint_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Get API version and feature flags",
+        "description": "Returns API version information and enabled feature flags. Use this to check which capabilities are available in this deployment.",
+        "operationId": "get_version",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories/dry-run-extract": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Dry-run fact extraction (preview, no persistence)",
+        "description": "Preview what the retain step would extract from text WITHOUT changing the bank — no entity resolution, links, embeddings, or persistence. Returns the candidate facts and the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, chunk size, …) is overridable in the body to A/B a candidate config against the bank's current one. This is a read-only tool: nothing is stored.",
+        "operationId": "dry_run_extract_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunExtractRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunExtractionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/prompts/preview": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Preview an operation's prompts (no LLM call)",
+        "description": "Render the exact system and user messages retain, consolidation or reflect would send for this bank, without calling an LLM, reading memories, or changing anything. Everything that shapes the prompt comes from the bank; the runtime data an operation would be given is a fixed placeholder. Both messages are returned: retain and consolidation keep their system prompt bank-agnostic (one provider-side cache serves every bank) and carry the mission in the user message instead.",
+        "operationId": "preview_prompt",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/stats": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Get statistics for memory bank",
+        "description": "Get statistics about nodes and links for a specific agent",
+        "operationId": "get_agent_stats",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache).",
+              "default": false,
+              "title": "Refresh"
+            },
+            "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache)."
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankStatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/health/llm": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Test the bank's LLM connectivity",
+        "description": "Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status only — never the provider, model, endpoint, API key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.",
+        "operationId": "test_bank_llm",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankLlmHealthResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "List async operations",
+        "description": "Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.",
+        "operationId": "list_operations",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status: pending, processing, completed, failed, or cancelled",
+              "title": "Status"
+            },
+            "description": "Filter by status: pending, processing, completed, failed, or cancelled"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery",
+              "title": "Type"
+            },
+            "description": "Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Maximum number of operations to return",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Maximum number of operations to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of operations to skip",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Number of operations to skip"
+          },
+          {
+            "name": "exclude_parents",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Exclude parent batch operations from results",
+              "default": false,
+              "title": "Exclude Parents"
+            },
+            "description": "Exclude parent batch operations from results"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Get operation status",
+        "description": "Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.",
+        "operationId": "get_operation_status",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "include_payload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include the raw task payload (submission params) in the response. May be large.",
+              "default": false,
+              "title": "Include Payload"
+            },
+            "description": "Include the raw task payload (submission params) in the response. May be large."
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Cancel a pending or in-flight async operation",
+        "description": "Cancel a queued or running async operation. A 'pending' operation is never started. A 'processing' one is cancelled cooperatively: the row is marked 'cancelled' immediately and the worker running it stops at its next checkpoint, so work already in flight may finish the batch it is on. This also clears operations stranded in 'processing' by a crashed worker. Returns 409 for operations that already reached a terminal state.",
+        "operationId": "cancel_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}/retry": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Retry a failed async operation",
+        "description": "Re-queue a failed async operation so the worker picks it up again",
+        "operationId": "retry_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}/delete": {
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Delete a terminal async operation",
+        "description": "Permanently remove a failed, cancelled, or completed async operation record",
+        "operationId": "delete_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/aliases": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "List the bank's aliases",
+        "description": "Extra bank ids that reach this bank. Every endpoint accepts an alias wherever it accepts a bank id, so callers can be moved onto a new id in phases while the old one keeps working.",
+        "operationId": "list_bank_aliases",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Add an alias to the bank",
+        "description": "Give the bank another id to answer to. Nothing is copied or moved: the bank keeps its own id and all of its data, and the alias is only a second way to reach it — which is what makes it a zero-downtime alternative to renaming.\n\nReturns 409 if the name is already a bank or another alias.",
+        "operationId": "create_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBankAliasRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/aliases/{alias}": {
+      "patch": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Show this alias in place of the bank id",
+        "description": "Present the bank under one of its aliases. Purely cosmetic: the bank keeps its own `bank_id`, which every other part of the system — authorisation, metering, exports, audit logs — continues to use.\n\nPromoting an alias demotes whichever one was shown before, so a bank is presented under at most one alias. Send `primary: false` to go back to showing its own id.",
+        "operationId": "set_bank_alias_primary",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBankAliasPrimaryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Remove an alias from the bank",
+        "description": "Stop an id reaching this bank. The bank and its memories are untouched; only the extra name goes away, and callers still using it get the same 404 (or new empty bank) they would have got before it existed.",
+        "operationId": "delete_bank_alias",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAliasesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/document-transfer": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents (removed — use POST .../document-transfer/export)",
+        "description": "**Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.",
+        "operationId": "export_documents_sync_removed",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Import documents (async)",
+        "description": "Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
+        "operationId": "import_documents",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "on_conflict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "skip | replace | new-id",
+              "default": "skip",
+              "title": "On Conflict"
+            },
+            "description": "skip | replace | new-id"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_documents"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentImportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/document-transfer/export": {
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents (async)",
+        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).",
+        "operationId": "export_documents",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import; whole-bank only)"
+          },
+          {
+            "name": "include_knowledge_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Knowledge Base"
+            },
+            "description": "Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentExportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/transfer/export": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Export a bank (async)",
+        "description": "Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).",
+        "operationId": "export_bank_transfer",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry the memories and everything backing them",
+              "default": true,
+              "title": "Include Data"
+            },
+            "description": "Carry the memories and everything backing them"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry the bank's config overrides, directives and webhooks",
+              "default": true,
+              "title": "Include Bank Config"
+            },
+            "description": "Carry the bank's config overrides, directives and webhooks"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Carry audit_log and llm_requests",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Carry audit_log and llm_requests"
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s); omit for the whole bank",
+              "title": "Document Id"
+            },
+            "description": "Document id(s); omit for the whole bank"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/transfer/import": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Import a bank (async)",
+        "description": "Submit a transfer archive (produced by the export endpoint) for import. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction, so the import costs no tokens and invents no new facts.\n\nTwo modes. `restore` (default) writes a whole bank into target_bank_id, which must NOT already exist — it restores a bank rather than merging into one, and is how a bank is moved between instances or copied under a new id. `merge` folds an archive's documents into this bank, with document_conflict deciding what happens to ids that already exist (skip, replace, new-id).\n\nThe include flags narrow what is restored to a subset of what the archive holds; they cannot add what the producer did not export. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and per-component counts. The operation is recorded against {bank_id} even in restore mode, because the target bank does not exist yet.",
+        "operationId": "import_bank_transfer",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "restore (into a fresh bank) | merge (into this bank)",
+              "default": "restore",
+              "title": "Mode"
+            },
+            "description": "restore (into a fresh bank) | merge (into this bank)"
+          },
+          {
+            "name": "target_bank_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: the bank to create; defaults to the archive's source bank",
+              "title": "Target Bank Id"
+            },
+            "description": "restore mode: the bank to create; defaults to the archive's source bank"
+          },
+          {
+            "name": "document_conflict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "merge mode: skip | replace | new-id",
+              "default": "skip",
+              "title": "Document Conflict"
+            },
+            "description": "merge mode: skip | replace | new-id"
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: carry the memories and everything backing them (default true)",
+              "title": "Include Data"
+            },
+            "description": "restore mode: carry the memories and everything backing them (default true)"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: restore the bank's config overrides, directives and webhooks (default true)",
+              "title": "Include Bank Config"
+            },
+            "description": "restore mode: restore the bank's config overrides, directives and webhooks (default true)"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "restore mode: carry audit_log and llm_requests (default false)",
+              "title": "Include History"
+            },
+            "description": "restore mode: carry audit_log and llm_requests (default false)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_bank_transfer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/clone": {
+      "post": {
+        "tags": [
+          "Bank Transfer"
+        ],
+        "summary": "Clone a bank (async)",
+        "description": "Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.\n\nThis is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).\n\nNote the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.\n\ntarget_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.",
+        "operationId": "clone_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "target_bank_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Bank to create; must not already exist",
+              "title": "Target Bank Id"
+            },
+            "description": "Bank to create; must not already exist"
+          },
+          {
+            "name": "include_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them",
+              "default": true,
+              "title": "Include Data"
+            },
+            "description": "Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them"
+          },
+          {
+            "name": "include_bank_config",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy the bank's config overrides, directives and webhooks",
+              "default": true,
+              "title": "Include Bank Config"
+            },
+            "description": "Copy the bank's config overrides, directives and webhooks"
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Copy audit_log and llm_requests",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Copy audit_log and llm_requests"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTransferSubmitResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/files/download/{key}": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Download a stored file (async export archive)",
+        "description": "Stream a file previously written to file storage — currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.",
+        "operationId": "download_file",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored file",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/consolidation-strategies/preview": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Preview consolidation strategies",
+        "description": "Report which of the bank's existing observation scopes each consolidation strategy would apply to, for a draft `consolidation_strategies` value (nothing is saved). Uses the same matching and first-strategy-wins rule as consolidation. Scans up to 10,000 distinct scopes; `complete` is false beyond that and the counts are lower bounds. Scopes with no observations yet do not exist and are not counted.",
+        "operationId": "preview_consolidation_strategies",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsolidationStrategiesPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationStrategiesPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/config": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Get bank configuration",
+        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides. Always available: HINDSIGHT_API_ENABLE_BANK_CONFIG_API gates only the write operations on this resource.",
+        "operationId": "get_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Update bank configuration",
+        "description": "Update configuration overrides for a bank. Only hierarchical behavioral settings can be overridden (retention parameters, recall settings, etc.). Keys can be provided in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE).",
+        "operationId": "update_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Reset bank configuration",
+        "description": "Reset bank configuration to defaults by removing all bank-specific overrides. The bank will then use global and tenant-level configuration only.",
+        "operationId": "reset_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/audit-logs/stats": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Audit log statistics",
+        "description": "Get audit log counts grouped by time bucket for charting.",
+        "operationId": "audit_log_stats",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by action type",
+              "title": "Action"
+            },
+            "description": "Filter by action type"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Time period: 1d, 7d, or 30d",
+              "default": "7d",
+              "title": "Period"
+            },
+            "description": "Time period: 1d, 7d, or 30d"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogStatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/llm-requests/stats": {
+      "get": {
+        "tags": [
+          "LLM Traces"
+        ],
+        "summary": "LLM request statistics",
+        "description": "Get LLM request counts grouped by time bucket and status for charting.",
+        "operationId": "llm_request_stats",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by operation",
+              "title": "Operation"
+            },
+            "description": "Filter by operation"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Time period: 1d, 7d, or 30d",
+              "default": "7d",
+              "title": "Period"
+            },
+            "description": "Time period: 1d, 7d, or 30d"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMRequestStatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "alive",
+            "title": "Status",
+            "description": "Always \"alive\" — reaching this handler is the check"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Hindsight version this process is running"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "description": "Seconds since the process started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "LivenessResponse",
+        "description": "Payload for the API's DB-free liveness probe.",
+        "example": {
+          "status": "alive",
+          "uptime_seconds": 812.4,
+          "version": "0.4.0"
+        }
+      },
+      "VersionResponse": {
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "title": "Api Version",
+            "description": "API version string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/FeaturesInfo",
+            "description": "Enabled feature flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "api_version",
+          "features"
+        ],
+        "title": "VersionResponse",
+        "description": "Response model for the version/info endpoint.",
+        "example": {
+          "api_version": "0.9.0",
+          "features": {
+            "audit_log": false,
+            "bank_config_api": false,
+            "bank_llm_health": true,
+            "document_export_api": true,
+            "document_import_api": true,
+            "file_upload_api": true,
+            "llm_trace": false,
+            "mcp": true,
+            "observations": false,
+            "store_document_text": true,
+            "worker": true
+          }
+        }
+      },
+      "DryRunExtractRequest": {
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/Content",
+            "description": "The raw content to extract facts from. Either a plain string, or an ordered list of content blocks (text, image, file) so images/attachments sit inline where they actually appear."
+          },
+          "context": {
+            "type": "string",
+            "title": "Context",
+            "description": "Optional context about the content.",
+            "default": ""
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "Reference timestamp for resolving relative times (ISO 8601)."
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name",
+            "description": "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.",
+            "deprecated": true
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "Name of a retain strategy to extract under (a key of the bank's `retain_strategies`). Omit it and the bank's `retain_default_strategy` applies, exactly as it does for a retain that names none."
+          },
+          "retain_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Mission"
+          },
+          "retain_extraction_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extraction Mode"
+          },
+          "retain_custom_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Custom Instructions"
+          },
+          "retain_extract_causal_links": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extract Causal Links"
+          },
+          "retain_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Size"
+          },
+          "entity_labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LabelGroup-Input"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels (overrides the bank's config for this call)"
+          },
+          "entities_allow_free_form": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities Allow Free Form"
+          },
+          "llm_output_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Output Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "DryRunExtractRequest",
+        "description": "Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).\n\nEvery field below the content/context/date is a prompt-affecting override applied just for this\ncall — used to preview what a candidate retain mission (or any extraction setting) would extract,\nwithout changing the bank. Unset (null) fields fall back to the bank's resolved config."
+      },
+      "DryRunExtractionResult": {
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "Candidate facts the retain step would extract."
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractionChunk"
+            },
+            "type": "array",
+            "title": "Chunks",
+            "description": "The chunks the input was cut into before extraction. Already computed on every path; returned because `retain_chunk_size` is otherwise a number with no visible effect."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "Aggregated token usage across the extraction LLM calls."
+          }
+        },
+        "type": "object",
+        "title": "DryRunExtractionResult",
+        "description": "Result of dry-run fact extraction: candidate facts, the chunks they came from,\nand aggregated LLM token usage."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "PromptPreviewRequest": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "consolidation",
+              "reflect"
+            ],
+            "title": "Operation",
+            "description": "Which operation's prompts to render.",
+            "default": "retain"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "Name of a retain strategy to render under (a key of the bank's `retain_strategies`). Retain only. Omit it and the bank's `retain_default_strategy` applies, exactly as it does for a retain that names none."
+          }
+        },
+        "type": "object",
+        "title": "PromptPreviewRequest",
+        "description": "Request to render the prompts an operation would send, without calling an LLM.\n\nThe operation is the whole request: everything that shapes the prompt comes from\nthe bank — its resolved config, profile and directives — and the runtime data an\noperation would be given is a fixed placeholder. There is deliberately nothing to\noverride. A preview answers \"what does this bank send\"; letting a caller pass its\nown mission or sample text only moved that question somewhere the bank cannot\nanswer it. To try a candidate value, save it and look again — the response says\nwhich settings are editable.",
+        "example": {
+          "operation": "retain"
+        }
+      },
+      "PromptPreviewResponse": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/PromptMessageModel"
+            },
+            "type": "array",
+            "title": "Messages",
+            "description": "Request messages, in send order. Each is given as the blocks it is built from."
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "The retain strategy these prompts were rendered under, if any."
+          },
+          "strategies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "Names of the bank's retain strategies, so a client can offer them without a second call."
+          },
+          "run_settings": {
+            "items": {
+              "$ref": "#/components/schemas/RunSettingModel"
+            },
+            "type": "array",
+            "title": "Run Settings",
+            "description": "Settings that shape the operation without appearing in its prompt, such as chunk sizes."
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "JSON schema the response is constrained to, when the operation constrains it."
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Reason",
+            "description": "Why no prompt is sent, when the configuration means none is."
+          }
+        },
+        "type": "object",
+        "title": "PromptPreviewResponse",
+        "description": "The messages one call of the requested operation would send.\n\n`messages` is in send order, system first. Both are always present because a\nmission is not necessarily in the system prompt: retain and consolidation keep\ntheir system prompt bank-agnostic (so one provider-side cache serves every bank)\nand carry the mission in the user message instead.\n\nWhen `skipped_reason` is set the configuration means no prompt is sent at all —\n`chunks` extraction mode stores each chunk verbatim and never calls an LLM — and\n`messages` is empty."
+      },
+      "BankStatsResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "total_nodes": {
+            "type": "integer",
+            "title": "Total Nodes"
+          },
+          "total_links": {
+            "type": "integer",
+            "title": "Total Links"
+          },
+          "total_documents": {
+            "type": "integer",
+            "title": "Total Documents"
+          },
+          "nodes_by_fact_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Nodes By Fact Type"
+          },
+          "links_by_link_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Links By Link Type"
+          },
+          "links_by_fact_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Links By Fact Type"
+          },
+          "links_breakdown": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Links Breakdown"
+          },
+          "pending_operations": {
+            "type": "integer",
+            "title": "Pending Operations"
+          },
+          "failed_operations": {
+            "type": "integer",
+            "title": "Failed Operations"
+          },
+          "operations_by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Operations By Status",
+            "description": "Async operations grouped by status (pending, processing, completed, failed, cancelled)."
+          },
+          "last_consolidated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Consolidated At",
+            "description": "When consolidation last ran (ISO format)"
+          },
+          "last_memory_write_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Write At",
+            "description": "When a memory was last written in this bank — stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_memory_seen_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
+          },
+          "pending_consolidation": {
+            "type": "integer",
+            "title": "Pending Consolidation",
+            "description": "Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed — those are counted only in failed_consolidation — so this drains to 0 when the consolidator catches up.",
+            "default": 0
+          },
+          "failed_consolidation": {
+            "type": "integer",
+            "title": "Failed Consolidation",
+            "description": "Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
+            "default": 0
+          },
+          "total_observations": {
+            "type": "integer",
+            "title": "Total Observations",
+            "description": "Total number of observations",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "total_nodes",
+          "total_links",
+          "total_documents",
+          "nodes_by_fact_type",
+          "links_by_link_type",
+          "links_by_fact_type",
+          "links_breakdown",
+          "pending_operations",
+          "failed_operations"
+        ],
+        "title": "BankStatsResponse",
+        "description": "Response model for bank statistics endpoint.",
+        "example": {
+          "bank_id": "user123",
+          "failed_consolidation": 0,
+          "failed_operations": 0,
+          "last_consolidated_at": "2024-01-15T10:30:00Z",
+          "last_memory_write_at": "2024-01-15T11:05:00Z",
+          "links_breakdown": {
+            "fact": {
+              "entity": 40,
+              "semantic": 60,
+              "temporal": 100
+            }
+          },
+          "links_by_fact_type": {
+            "fact": 200,
+            "observation": 40,
+            "preference": 60
+          },
+          "links_by_link_type": {
+            "entity": 50,
+            "semantic": 100,
+            "temporal": 150
+          },
+          "nodes_by_fact_type": {
+            "fact": 100,
+            "observation": 20,
+            "preference": 30
+          },
+          "pending_consolidation": 0,
+          "pending_operations": 2,
+          "total_documents": 10,
+          "total_links": 300,
+          "total_nodes": 150,
+          "total_observations": 45
+        }
+      },
+      "BankLlmHealthResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank identifier"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/LlmOperationHealth"
+            },
+            "type": "array",
+            "title": "Operations",
+            "description": "Connectivity status per operation (retain, consolidation, reflect)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "operations"
+        ],
+        "title": "BankLlmHealthResponse",
+        "description": "Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations\nthat share a configuration are probed once. Discloses status only — never the\nprovider, model, endpoint, API key, or raw error.",
+        "example": {
+          "bank_id": "user123",
+          "operations": [
+            {
+              "latency_ms": 412,
+              "ok": true,
+              "operation": "retain",
+              "status": "connected"
+            },
+            {
+              "latency_ms": 412,
+              "ok": true,
+              "operation": "consolidation",
+              "status": "connected"
+            },
+            {
+              "ok": false,
+              "operation": "reflect",
+              "status": "not_configured"
+            }
+          ]
+        }
+      },
+      "OperationsListResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationResponse"
+            },
+            "type": "array",
+            "title": "Operations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "total",
+          "limit",
+          "offset",
+          "operations"
+        ],
+        "title": "OperationsListResponse",
+        "description": "Response model for list operations endpoint.",
+        "example": {
+          "bank_id": "user123",
+          "limit": 20,
+          "offset": 0,
+          "operations": [
+            {
+              "created_at": "2024-01-15T10:30:00Z",
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "items_count": 5,
+              "status": "pending",
+              "task_type": "retain"
+            }
+          ],
+          "total": 150
+        }
+      },
+      "OperationStatusResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "completed",
+              "failed",
+              "cancelled",
+              "not_found"
+            ],
+            "title": "Status"
+          },
+          "operation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Type"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Same as `operation_id`; the name the operations list uses."
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Same as `operation_type`; the name the operations list uses."
+          },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types."
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "retry_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Count",
+            "description": "Number of times this operation has been retried after failure."
+          },
+          "next_retry_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Retry At",
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked — a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation — rather than awaiting immediate pickup."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
+          },
+          "result_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Metadata",
+            "description": "Internal metadata for debugging. Structure may change without notice. Not for production use."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field — new operation types add their own shape here rather than flattening fields onto the operation."
+          },
+          "child_operations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChildOperationStatus"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Operations",
+            "description": "Child operations for batch operations (if applicable)"
+          },
+          "task_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Payload",
+            "description": "Raw task payload (params the operation was submitted with). Only populated when include_payload=true."
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status"
+        ],
+        "title": "OperationStatusResponse",
+        "description": "Response model for getting a single operation status.",
+        "example": {
+          "completed_at": "2024-01-15T10:31:30Z",
+          "created_at": "2024-01-15T10:30:00Z",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+          "operation_type": "refresh_mental_model",
+          "status": "completed",
+          "updated_at": "2024-01-15T10:31:30Z"
+        }
+      },
+      "CancelOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "operation_id"
+        ],
+        "title": "CancelOperationResponse",
+        "description": "Response model for cancel operation endpoint.",
+        "example": {
+          "message": "Operation 550e8400-e29b-41d4-a716-446655440000 cancelled",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+          "success": true
+        }
+      },
+      "RetryOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "operation_id"
+        ],
+        "title": "RetryOperationResponse",
+        "description": "Response model for retry operation endpoint.",
+        "example": {
+          "message": "Operation 550e8400-e29b-41d4-a716-446655440000 queued for retry",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+          "success": true
+        }
+      },
+      "DeleteOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "operation_id"
+        ],
+        "title": "DeleteOperationResponse",
+        "description": "Response model for delete operation endpoint.",
+        "example": {
+          "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+          "success": true
+        }
+      },
+      "BankAliasesResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "The bank's own id, which an alias never replaces"
+          },
+          "aliases": {
+            "items": {
+              "$ref": "#/components/schemas/BankAliasEntry"
+            },
+            "type": "array",
+            "title": "Aliases",
+            "description": "Extra ids that also reach this bank, the primary one first then oldest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "aliases"
+        ],
+        "title": "BankAliasesResponse",
+        "description": "Response model for a bank's aliases.",
+        "example": {
+          "aliases": [
+            {
+              "alias": "user-123",
+              "primary": true
+            },
+            {
+              "alias": "legacy-user123",
+              "primary": false
+            }
+          ],
+          "bank_id": "user123"
+        }
+      },
+      "CreateBankAliasRequest": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias",
+            "description": "The extra bank id. Same rules as a bank id (non-empty, at most 192 bytes of UTF-8, no control characters), and it must not already name a bank or another alias."
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Also show the bank under this alias, replacing whichever alias is shown today.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "CreateBankAliasRequest",
+        "description": "Request model for adding an alias to a bank.",
+        "example": {
+          "alias": "user-123"
+        }
+      },
+      "SetBankAliasPrimaryRequest": {
+        "properties": {
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "True to present the bank under this alias; False to go back to its own id."
+          }
+        },
+        "type": "object",
+        "required": [
+          "primary"
+        ],
+        "title": "SetBankAliasPrimaryRequest",
+        "description": "Request model for showing (or no longer showing) an alias in place of the bank id."
+      },
+      "Body_import_documents": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Transfer ZIP archive"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_documents"
+      },
+      "DocumentImportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentImportSubmitResponse",
+        "description": "Response for the async document-import endpoint (202).\n\nThe import runs in the background; poll the operations endpoint for status.\nThe imported/skipped counts (documents_imported, facts_imported,\nobservations_imported, etc.) are written to the operation's result_metadata."
+      },
+      "DocumentExportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentExportSubmitResponse",
+        "description": "Response for the async document-export endpoint (202).\n\nThe export runs in the background; poll the operations endpoint for status.\nOn completion the operation's ``result_metadata`` carries ``download_url``\n(fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,\n``byte_size``, and ``filename``."
+      },
+      "BankTransferSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "BankTransferSubmitResponse",
+        "description": "Response for the unified bank-transfer endpoints (202).\n\nThe transfer runs in the background; poll\nGET /v1/default/banks/{bank_id}/operations/{operation_id}. An export's\n``result_metadata`` carries ``download_url`` / ``storage_key`` /\n``byte_size`` / ``filename``; an import's carries the per-component counts."
+      },
+      "Body_import_bank_transfer": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Transfer ZIP archive"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_bank_transfer"
+      },
+      "ConsolidationStrategiesPreviewRequest": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationStrategySpec"
+            },
+            "type": "array",
+            "title": "Strategies",
+            "description": "Draft consolidation_strategies value"
+          },
+          "sample_limit": {
+            "type": "integer",
+            "maximum": 50,
+            "minimum": 0,
+            "title": "Sample Limit",
+            "description": "Example scopes returned per rule",
+            "default": 5
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies"
+        ],
+        "title": "ConsolidationStrategiesPreviewRequest",
+        "description": "A draft consolidation_strategies value to preview against existing scopes."
+      },
+      "ConsolidationStrategiesPreview": {
+        "properties": {
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyPreview"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "default": {
+            "$ref": "#/components/schemas/DefaultScopesPreview"
+          },
+          "scopes_scanned": {
+            "type": "integer",
+            "title": "Scopes Scanned",
+            "description": "Distinct scopes the preview was computed over"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete",
+            "description": "False when the bank has more distinct scopes than the preview scans; counts are then lower bounds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategies",
+          "default",
+          "scopes_scanned",
+          "complete"
+        ],
+        "title": "ConsolidationStrategiesPreview",
+        "description": "Which existing observation scopes each consolidation strategy would apply to."
+      },
+      "BankConfigResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank identifier"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config",
+            "description": "Fully resolved configuration with all hierarchical overrides applied (Python field names)"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Overrides",
+            "description": "Bank-specific configuration overrides only (Python field names)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "config",
+          "overrides"
+        ],
+        "title": "BankConfigResponse",
+        "description": "Response model for bank configuration.",
+        "example": {
+          "bank_id": "my-bank",
+          "config": {
+            "retain_chunk_size": 3000,
+            "retain_extraction_mode": "verbose"
+          },
+          "overrides": {
+            "retain_extraction_mode": "verbose"
+          }
+        }
+      },
+      "BankConfigUpdate": {
+        "properties": {
+          "updates": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Updates",
+            "description": "Configuration overrides. Keys can be in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE). Only hierarchical fields can be overridden per-bank."
+          }
+        },
+        "type": "object",
+        "required": [
+          "updates"
+        ],
+        "title": "BankConfigUpdate",
+        "description": "Request model for updating bank configuration.",
+        "example": {
+          "updates": {
+            "retain_custom_instructions": "Extract technical details carefully",
+            "retain_extraction_mode": "custom"
+          }
+        }
+      },
+      "AuditLogStatsResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "trunc": {
+            "type": "string",
+            "title": "Trunc"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/AuditLogStatsBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "period",
+          "trunc",
+          "start",
+          "buckets"
+        ],
+        "title": "AuditLogStatsResponse",
+        "description": "Response model for audit log stats endpoint."
+      },
+      "LLMRequestStatsResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "trunc": {
+            "type": "string",
+            "title": "Trunc"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/LLMRequestStatsBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "period",
+          "trunc",
+          "start",
+          "buckets"
+        ],
+        "title": "LLMRequestStatsResponse",
+        "description": "LLM request counts and token sums grouped by time bucket."
+      },
+      "FeaturesInfo": {
+        "properties": {
+          "observations": {
+            "type": "boolean",
+            "title": "Observations",
+            "description": "Whether observations (auto-consolidation) are enabled"
+          },
+          "mcp": {
+            "type": "boolean",
+            "title": "Mcp",
+            "description": "Whether MCP (Model Context Protocol) server is enabled"
+          },
+          "worker": {
+            "type": "boolean",
+            "title": "Worker",
+            "description": "Whether the background worker is enabled"
+          },
+          "bank_config_api": {
+            "type": "boolean",
+            "title": "Bank Config Api",
+            "description": "Whether per-bank configuration API is enabled"
+          },
+          "bank_llm_health": {
+            "type": "boolean",
+            "title": "Bank Llm Health",
+            "description": "Whether the per-bank LLM connectivity probe is enabled"
+          },
+          "file_upload_api": {
+            "type": "boolean",
+            "title": "File Upload Api",
+            "description": "Whether file upload/conversion API is enabled"
+          },
+          "document_export_api": {
+            "type": "boolean",
+            "title": "Document Export Api",
+            "description": "Whether the document export endpoint is enabled"
+          },
+          "document_import_api": {
+            "type": "boolean",
+            "title": "Document Import Api",
+            "description": "Whether the document import endpoint is enabled"
+          },
+          "audit_log": {
+            "type": "boolean",
+            "title": "Audit Log",
+            "description": "Whether audit logging is enabled by default (overridable per bank)"
+          },
+          "llm_trace": {
+            "type": "boolean",
+            "title": "Llm Trace",
+            "description": "Whether per-bank LLM request tracing is enabled"
+          },
+          "store_document_text": {
+            "type": "boolean",
+            "title": "Store Document Text",
+            "description": "Whether raw source text is persisted. When false, document/chunk source text is not stored."
+          }
+        },
+        "type": "object",
+        "required": [
+          "observations",
+          "mcp",
+          "worker",
+          "bank_config_api",
+          "bank_llm_health",
+          "file_upload_api",
+          "document_export_api",
+          "document_import_api",
+          "audit_log",
+          "llm_trace",
+          "store_document_text"
+        ],
+        "title": "FeaturesInfo",
+        "description": "Feature flags indicating which capabilities are enabled."
+      },
+      "Content": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContentBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/FileContentBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "file": "#/components/schemas/FileContentBlock",
+                  "image": "#/components/schemas/ImageContentBlock",
+                  "text": "#/components/schemas/TextContentBlock"
+                }
+              }
+            },
+            "type": "array"
+          }
+        ],
+        "title": "Content",
+        "description": "The raw content to retain or extract from. Either a plain string or an ordered list of content blocks."
+      },
+      "LabelGroup-Input": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "multi-text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "ExtractedFact": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The extracted fact text."
+          },
+          "fact_type": {
+            "type": "string",
+            "title": "Fact Type",
+            "description": "Perspective classification: 'world' or 'experience'."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start",
+            "description": "ISO timestamp the fact's event started, if dated."
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End",
+            "description": "ISO timestamp the fact's event ended, if dated."
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Entities",
+            "description": "Raw (unresolved) entity names mentioned in the fact."
+          },
+          "chunk_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Index",
+            "description": "Index into `chunks` of the chunk this fact came from; null if it could not be attributed."
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFactAttachment"
+            },
+            "type": "array",
+            "title": "Attachments",
+            "description": "Attachments from user input that this fact is attributed to / associated with."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "fact_type"
+        ],
+        "title": "ExtractedFact",
+        "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape — only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, …)\nare omitted because nothing is stored. Entities are raw, unresolved names."
+      },
+      "ExtractionChunk": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The chunk as the extractor saw it."
+          },
+          "fact_count": {
+            "type": "integer",
+            "title": "Fact Count",
+            "description": "How many facts came out of this chunk."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "fact_count"
+        ],
+        "title": "ExtractionChunk",
+        "description": "One chunk the extractor was handed, and how much it yielded."
+      },
+      "TokenUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "description": "Number of input/prompt tokens consumed",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "description": "Number of visible output/completion tokens generated (excludes reasoning/thoughts)",
+            "default": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "description": "Total tokens (input + output, excludes thoughts)",
+            "default": 0
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens",
+            "description": "Cached/cache-read prompt tokens, when reported by the provider",
+            "default": 0
+          },
+          "thoughts_tokens": {
+            "type": "integer",
+            "title": "Thoughts Tokens",
+            "description": "Reasoning/thinking tokens generated by the model. Billed at the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced in the visible response.",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TokenUsage",
+        "description": "Token usage metrics for LLM calls.\n\nTracks input/output tokens for a single request to enable\nper-request cost tracking and monitoring.",
+        "example": {
+          "input_tokens": 1500,
+          "output_tokens": 500,
+          "total_tokens": 2000
+        }
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "PromptMessageModel": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user"
+            ],
+            "title": "Role"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/PromptBlockModel"
+            },
+            "type": "array",
+            "title": "Blocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "PromptMessageModel",
+        "description": "One message of the request, as the blocks it is built from."
+      },
+      "RunSettingModel": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Effective value; null when unset."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "boolean",
+              "choice",
+              "complex"
+            ],
+            "title": "Kind",
+            "description": "Shape of the value, so a client can offer the right control."
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "description": "Whether this bank may override the field via the bank config API.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "kind"
+        ],
+        "title": "RunSettingModel",
+        "description": "A setting that shapes the operation without appearing in its prompt.\n\nChunk sizes decide how the input is cut before extraction runs, so they change\nwhat comes back while contributing no prompt text — they cannot be blocks, which\npartition the message, and these are in none of it."
+      },
+      "LlmOperationHealth": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "consolidation",
+              "reflect"
+            ],
+            "title": "LlmHealthOperation",
+            "description": "Operation whose LLM was probed"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "description": "True only when the probe connected successfully"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "not_configured",
+              "auth_failed",
+              "unreachable",
+              "timeout"
+            ],
+            "title": "LlmHealthStatus",
+            "description": "'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected — usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms",
+            "description": "Round-trip latency of the probe call"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "ok",
+          "status"
+        ],
+        "title": "LlmOperationHealth",
+        "description": "LLM connectivity status for a single operation. Status only — no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
+      },
+      "OperationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "Same as `id`; the name the single-operation read uses."
+          },
+          "operation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Type",
+            "description": "Same as `task_type`; the name the single-operation read uses."
+          },
+          "items_count": {
+            "type": "integer",
+            "title": "Items Count"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
+          },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshMentalModelOperationDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed, per-operation-type outcome detail, discriminated by its own `operation_type`. Populated for `refresh_mental_model` operations that have finished; null for operation types that report no typed detail, for operations still in flight, and for operations recorded before this field existed. Unlike `result_metadata` this is a supported field — new operation types add their own shape here rather than flattening fields onto the operation."
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "When this operation's row last changed (claim, progress heartbeat, or completion)."
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "retry_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Count",
+            "description": "Number of times this operation has been retried after failure."
+          },
+          "next_retry_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Retry At",
+            "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup — a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation until some backpressure window opens. It is not cleared when the task finally runs, so on a terminal operation it is a record of the last wait rather than a pending one: read it together with status."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_type",
+          "items_count",
+          "created_at",
+          "status",
+          "error_message"
+        ],
+        "title": "OperationResponse",
+        "description": "Response model for a single async operation.",
+        "example": {
+          "created_at": "2024-01-15T10:30:00Z",
+          "id": "550e8400-e29b-41d4-a716-446655440000",
+          "items_count": 5,
+          "retry_count": 0,
+          "status": "pending",
+          "task_type": "retain"
+        }
+      },
+      "OperationProgress": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "description": "Coarse phase the operation last reported (e.g. 'processing_batch')."
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "ISO-8601 timestamp when this snapshot was written."
+          },
+          "processed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed",
+            "description": "Units of work finished so far (sub-batches, memories), when known."
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "Total units of work for the operation, when known."
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "Operation-specific counters (e.g. observations_created, round, items_in_sub_batch)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "at"
+        ],
+        "title": "OperationProgress",
+        "description": "Last-known progress snapshot for a long-running async operation.\n\nWritten at coarse phase/batch boundaries by the worker (consolidation, batch\nretain). Lets an operator polling the operation status API distinguish a healthy\nlong-running job (``processed`` advancing across polls) from a frozen one (same\nnumbers, no movement in ``at``). Absent (``null``) on operations that never\nreached a checkpoint — completed-instantly or pre-feature rows."
+      },
+      "RefreshMentalModelOperationDetails": {
+        "properties": {
+          "operation_type": {
+            "type": "string",
+            "const": "refresh_mental_model",
+            "title": "Operation Type",
+            "description": "Discriminator: which operation type this detail describes.",
+            "default": "refresh_mental_model"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_unchanged",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied",
+              "refresh_failed_structured_output",
+              "refresh_failed_error"
+            ],
+            "title": "Outcome",
+            "description": "What the refresh did with the document: rewrote it (`content_written`), produced a document identical to the stored one (`content_unchanged`), had no new facts to read at all (`content_preserved_no_new_facts`), or refused to write (the `refresh_failed_*` values)."
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "empty_candidate",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped",
+                  "delta_not_applied",
+                  "structured_output_failed",
+                  "retrieval_failed",
+                  "no_answer",
+                  "unexpected_error"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason",
+            "description": "Why the refresh refused to write, finer-grained than the outcome — it distinguishes an op call that failed from one whose operations were all rejected, and from a baseline document that could not be read. Null unless `outcome` is one of the `refresh_failed_*` values."
+          }
+        },
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "title": "RefreshMentalModelOperationDetails",
+        "description": "What a refresh_mental_model operation did, on the operation record itself.\n\nReported under an async operation's ``details``, which is keyed by\n``operation_type``: each type that has a typed outcome to report contributes\nits own shape there, rather than every type's fields being flattened onto the\noperation. Today refresh is the only one.\n\nThis exists because ``result_metadata`` — the only per-refresh record kept\nindefinitely — could not say what a refresh did (#3274), and is documented as\ndebug-only and unstable, so it is not something a caller can build on."
+      },
+      "ChildOperationStatus": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "sub_batch_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Batch Index"
+          },
+          "items_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items Count"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status"
+        ],
+        "title": "ChildOperationStatus",
+        "description": "Status of a child operation (for batch operations)."
+      },
+      "BankAliasEntry": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "description": "Whether this alias is shown in place of the bank's own id. Display only — the bank keeps its id, and everything that names a bank still uses it. At most one alias per bank can be primary, and none has to be.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "BankAliasEntry",
+        "description": "One id a bank answers to."
+      },
+      "ConsolidationStrategySpec": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationScopePattern"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "description": "Alternatives: the strategy claims a scope when any rule matches it"
+          },
+          "observations_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations Mission"
+          },
+          "max_observations_per_scope": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Observations Per Scope"
+          },
+          "consolidation_source_facts_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens"
+          },
+          "consolidation_source_facts_max_tokens_per_observation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens Per Observation"
+          }
+        },
+        "type": "object",
+        "title": "ConsolidationStrategySpec",
+        "description": "One `consolidation_strategies` entry: the rules it claims scopes with, and\nthe observation settings those scopes use. Every setting is optional; unset\nones come from the bank-wide values."
+      },
+      "StrategyPreview": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "False when the server would ignore this strategy (no usable rule, or no setting)"
+          },
+          "claimed_count": {
+            "type": "integer",
+            "title": "Claimed Count",
+            "description": "Existing scopes this strategy actually applies to"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyRulePreview"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "One entry per rule, aligned with the request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "claimed_count",
+          "rules"
+        ],
+        "title": "StrategyPreview",
+        "description": "Preview of one strategy, aligned by position with the request."
+      },
+      "DefaultScopesPreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "DefaultScopesPreview",
+        "description": "The scopes no strategy claims — they consolidate under the bank-wide settings."
+      },
+      "AuditLogStatsBucket": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "actions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Actions"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "actions",
+          "total"
+        ],
+        "title": "AuditLogStatsBucket",
+        "description": "A single time bucket in audit log stats."
+      },
+      "LLMRequestStatsBucket": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Statuses"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/LLMRequestTokenSums"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "statuses",
+          "total",
+          "tokens"
+        ],
+        "title": "LLMRequestStatsBucket",
+        "description": "A single time bucket in LLM request stats."
+      },
+      "TextContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentBlock",
+        "description": "A run of text within a multimodal item, in the position the caller wrote it."
+      },
+      "ImageContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "ImageContentBlock",
+        "description": "An image within a multimodal item, in the position the caller wrote it."
+      },
+      "FileContentBlock": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "title": "Type"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Base64AttachmentSource"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename, passed to providers that show one to the model (e.g. OpenAI)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "source"
+        ],
+        "title": "FileContentBlock",
+        "description": "A non-image attachment — a PDF, a spreadsheet — in its input position.\n\nThis stays distinct from ``image`` because providers use different request\nparts for images and documents; retaining the caller's kind avoids guessing."
+      },
+      "LabelValue": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LabelValue",
+        "description": "A single allowed value for a label group."
+      },
+      "MapField-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "multi-text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
+      },
+      "ExtractedFactAttachment": {
+        "properties": {
+          "block_index": {
+            "type": "integer",
+            "title": "Block Index",
+            "description": "Index of the content block in user's input (0-based)"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "file"
+            ],
+            "title": "AttachmentType",
+            "description": "Content block type ('image' or 'file')"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME media type of the attachment, e.g. 'image/png'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_index",
+          "type",
+          "media_type"
+        ],
+        "title": "ExtractedFactAttachment",
+        "description": "An attachment from multimodal input associated with an extracted fact."
+      },
+      "PromptBlockModel": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The block's text; empty when the block is inactive."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "config",
+              "builtin"
+            ],
+            "title": "Source",
+            "description": "`config` — produced by a setting (`field` names it); `builtin` — Hindsight's own wording."
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "Config field behind this block; empty when no single field owns it.",
+            "default": ""
+          },
+          "section": {
+            "type": "string",
+            "title": "Section",
+            "description": "Slug for a part the preview names itself and no field owns: `bank_identity`, `disposition`, `directives`. Empty otherwise.",
+            "default": ""
+          },
+          "heading": {
+            "type": "string",
+            "title": "Heading",
+            "description": "The section heading the prompt text carries at this point, extracted from the prompt itself. Empty when it carries none.",
+            "default": ""
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "Whether this block is in the prompt as configured.",
+            "default": true
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "The field's effective value; null when unset."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "boolean",
+              "choice",
+              "complex"
+            ],
+            "title": "Kind",
+            "description": "Shape of the value, so a client can offer the right control for editing it."
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices",
+            "description": "Allowed values, when `kind` is `choice`."
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "description": "Whether this bank may override the field via the bank config API. Server-level fields shape the prompt but cannot be set per bank, and offering to edit one would only collect a 400.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "source",
+          "kind"
+        ],
+        "title": "PromptBlockModel",
+        "description": "One block of a message: its text, and the setting that decides it.\n\nThe **active** blocks of a message concatenate back to the exact text sent, so a\nclient can render them separately without showing the reader something the model\nnever receives. An **inactive** block has no text: it marks a setting that is\nswitched off, at the point where it would land if it were on.\n\nEverything identifying a block is a machine value, never display copy — what a\nblock is called, and what turning a switched-off one on would do, is for the\nclient to say in the language it is running in."
+      },
+      "ConsolidationScopePattern": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "fnmatch tag patterns, e.g. company:*"
+          },
+          "tags_match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags Match",
+            "description": "\"all\" (the default when omitted): the scope has every tag in the rule, other tags allowed. \"exact\": exactly these tags and no others."
+          }
+        },
+        "type": "object",
+        "title": "ConsolidationScopePattern",
+        "description": "One rule of a consolidation strategy: tags, and how they must match.\n\n``tags`` may be empty — that is a rule still being filled in, which the editor\nsaves as typed and consolidation ignores. The type pins the *shape*, not\ncompleteness: a string where the tag list belongs is rejected at the door\ninstead of being stored and silently ignored for the life of the bank.\n\nUnknown keys are rejected too, but by :class:`StrictConsolidationStrategySpec`\non the write path rather than by ``extra=\"forbid\"`` here: that would put\n``additionalProperties: false`` in the schema, which openapi-generator cannot\nprocess (\"Codegen Property not yet supported in getPydanticType\")."
+      },
+      "StrategyRulePreview": {
+        "properties": {
+          "match_count": {
+            "type": "integer",
+            "title": "Match Count",
+            "description": "Existing scopes this rule matches"
+          },
+          "taken_count": {
+            "type": "integer",
+            "title": "Taken Count",
+            "description": "Of those, how many an earlier strategy wins, so this one has no effect"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "description": "Observations across the matching scopes"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyScopePreview"
+            },
+            "type": "array",
+            "title": "Samples",
+            "description": "The most populous matching scopes, up to sample_limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "match_count",
+          "taken_count",
+          "observation_count",
+          "samples"
+        ],
+        "title": "StrategyRulePreview",
+        "description": "What one rule (one entry of a strategy's `scopes`) matches among existing scopes."
+      },
+      "StrategyScopePreview": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The scope's tags (sorted)"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Observations in this scope"
+          },
+          "handled_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handled By",
+            "description": "Index of the strategy that actually applies to this scope (the first that claims it), or null when no strategy does and Default applies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags",
+          "count",
+          "handled_by"
+        ],
+        "title": "StrategyScopePreview",
+        "description": "One existing observation scope in a consolidation-strategy preview."
+      },
+      "LLMRequestTokenSums": {
+        "properties": {
+          "input": {
+            "type": "integer",
+            "title": "Input"
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output"
+          },
+          "cached": {
+            "type": "integer",
+            "title": "Cached"
+          },
+          "thoughts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thoughts"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "input",
+          "output",
+          "cached",
+          "total"
+        ],
+        "title": "LLMRequestTokenSums",
+        "description": "Token totals for a time bucket."
+      },
+      "Base64AttachmentSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "base64",
+            "title": "Type",
+            "default": "base64"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "MIME type of the attachment, e.g. 'image/png' or 'application/pdf'. Any well-formed type is accepted; whether the model can read it is the model's answer to give, and a provider that rejects it fails the retain with its own error."
+          },
+          "data": {
+            "type": "string",
+            "title": "Data",
+            "description": "Base64-encoded bytes (no data: URI prefix)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "title": "Base64AttachmentSource",
+        "description": "Inline attachment bytes, base64-encoded.\n\nThe only source type in this version. ``url`` (server-side fetch) and\n``blob_id`` (pre-uploaded handle) are the natural next ones, which is why this\nis modelled as a discriminated union on ``type`` rather than as bare fields."
+      }
+    }
+  }
+}

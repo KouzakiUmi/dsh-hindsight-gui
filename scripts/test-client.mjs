@@ -322,13 +322,14 @@ function createFetchMock() {
 const fakeDocument = {
   visibilityState: 'visible',
   querySelector: () => null,
+  getElementById: () => null,
   createElement: () => ({ dataset: {}, style: {} }),
   head: { appendChild() {} },
 }
 
 function loadModule(harness, fetchMock, clock = {}) {
   const sandbox = {
-    console, fetch: fetchMock, document: fakeDocument, AbortController,
+    console, fetch: fetchMock, document: fakeDocument, AbortController, TextEncoder, TextDecoder, Blob, File, crypto: globalThis.crypto,
     setTimeout, clearTimeout, setInterval, clearInterval, ...clock,
     Date, URL, Promise, JSON, Math, Object, Array, Set, Map, Symbol, String, Number, Boolean,
     Error, TypeError, RangeError, RegExp, Reflect, Proxy,
@@ -624,6 +625,24 @@ test('bankdefense：读取失败=unknown 且禁止写入；API 地址变更重�
   assert.equal(defenseToggle(root).props.checked, false, 'toggle off applied')
 })
 
+test('bankdefense：HTTP 422 显示失败并恢复原开关，不冒称已保存', async () => {
+  const fetchMock = createFetchMock()
+  const status = baseStatus()
+  status.banks = [{ id:'bank-a', name:'A', facts:0, updatedAt:null }]
+  const { harness, root } = await mountPage(fetchMock,{status,models:MODELS_OK,tab:'安全'})
+  await fetchMock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:{enabled:false,rules:[]}}})
+  await harness.settle()
+  check(defenseToggle(root),true)
+  harness.flush()
+  await fetchMock.respond('/bankdefense',{status:422,payload:{error:'Hindsight 请求失败（HTTP 422）；上游错误正文不回传以避免泄露凭据'}})
+  await harness.settle()
+  assert.equal(defenseToggle(root).props.checked,false,'restore the last confirmed policy')
+  assert.equal(defenseToggle(root).props.disabled,false,'failed write does not leave loading stuck')
+  assert.ok(pageText(root).includes('HTTP 422'))
+  harness.unmount(root)
+  await harness.settle()
+})
+
 test('bankdefense canonical 判定：strong block 不算 enabled', async () => {
   const fetchMock = createFetchMock()
   const status = baseStatus()
@@ -720,7 +739,9 @@ test('服务门控：unmanaged 禁重启；operation 期间按钮禁用；legacy
   opStatus.server.operation = 'restart'
   const second = await mountPage(createFetchMock(), { status: opStatus, models: MODELS_OK, tab: '概览' })
   assert.equal(buttonByText(second.root, '重启中…').props.disabled, true, 'button disabled while host operation in flight')
-  assert.ok(pageText(second.root).includes('运行中配置') && pageText(second.root).includes('fp-1'), 'runningConfig shown')
+  assert.ok(!pageText(second.root).includes('fp-1'), 'technical snapshot is collapsed initially')
+  toggleDetails(second.harness,second.root,'启动与运行详情')
+  assert.ok(pageText(second.root).includes('运行中配置') && pageText(second.root).includes('fp-1'), 'runningConfig available when expanded')
 
   // 旧 host：没有 ownership/can* 契约，重启一律默认拒绝（可能是别人的进程）
   const legacy = baseStatus()
@@ -944,6 +965,137 @@ test('保存期间又有新编辑时服务操作中止，不用旧配置执行',
   switchTab(harness, root, '记忆与连接')
   assert.equal(apiUrlInput(root).props.value, 'http://127.0.0.1:7778', 'newest input kept')
   assert.ok(pageText(root).includes('有未保存的更改'), 'newest edit still dirty')
+})
+
+test('裸模型 ID 保持可见，不被不存在的下拉选项吞掉', async () => {
+  const mock=createFetchMock(), status=baseStatus()
+  status.gui.serverModels.reflect='deepseek-chat'
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'模型'})
+  const custom=inputs(root,'text').find(n=>n.props['aria-label']==='反思推理 自定义模型')
+  assert.equal(custom.props.value,'deepseek-chat')
+  harness.unmount(root); await harness.settle()
+})
+
+test('模型发现超时结束 loading；保存超时保留草稿且不能重复并发提交', async () => {
+  const mock=createFetchMock(), clock=fakeClock()
+  const {harness,root}=await mountPage(mock,{status:baseStatus(),tab:'模型',clock})
+  clock.expire(30000); await harness.settle()
+  assert.ok(pageText(root).includes('请求超时'))
+  assert.equal(buttonByText(root,'刷新 DSH 模型').props.disabled,false)
+  switchTab(harness,root,'记忆与连接')
+  change(apiUrlInput(root),'http://127.0.0.1:7777'); harness.flush()
+  const saveButton=buttonByText(root,'保存')
+  click(saveButton); click(saveButton)
+  assert.equal(mock.count('/config'),1,'synchronous save fence prevents duplicate requests')
+  clock.expire(30000); await harness.settle()
+  assert.equal(apiUrlInput(root).props.value,'http://127.0.0.1:7777')
+  assert.ok(pageText(root).includes('结果尚未确认'))
+  assert.equal(buttonByText(root,'保存').props.disabled,false)
+  harness.unmount(root); await harness.settle(); assert.equal(clock.pending(),0)
+})
+
+test('缺失 Provider 列表不能冒称模型发现成功', async () => {
+  const mock=createFetchMock()
+  const {harness,root}=await mountPage(mock,{status:baseStatus(),models:{},tab:'模型'})
+  assert.ok(pageText(root).includes('模型响应缺少 Provider 列表'))
+  assert.ok(pageText(root).includes('无法获取 DSH 模型列表'))
+  harness.unmount(root); await harness.settle()
+})
+
+test('无效保存响应不重设草稿与基线', async () => {
+  const mock=createFetchMock()
+  const {harness,root}=await mountPage(mock,{status:baseStatus(),models:MODELS_OK})
+  change(apiUrlInput(root),'http://127.0.0.1:7777'); harness.flush()
+  click(buttonByText(root,'保存'))
+  await mock.respond('/config',{payload:{}}); await harness.settle()
+  assert.equal(apiUrlInput(root).props.value,'http://127.0.0.1:7777')
+  assert.ok(pageText(root).includes('配置响应格式无效'))
+  assert.ok(pageText(root).includes('有未保存的更改'))
+  harness.unmount(root); await harness.settle()
+})
+
+test('脱敏读取超时后可重读；搜索与未知事实数不会误导', async () => {
+  const mock=createFetchMock(), clock=fakeClock(), status=baseStatus()
+  status.banks=[{id:'bank-a',name:'检索测试',facts:null}]
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'安全',clock})
+  clock.expire(15000); await harness.settle()
+  assert.equal(defenseToggle(root).props.disabled,true)
+  assert.ok(pageText(root).includes('事实数未知'))
+  assert.ok(!pageText(root).includes('null facts'))
+  // Drop the late timed-out response, then deliver the explicit read-only retry.
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:null}}); await harness.settle()
+  click(buttonByText(root,'重读策略'))
+  assert.equal(mock.last('/bankdefense').method,'GET')
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:{enabled:true,rules:[{on:'sensitive_data',action:'redact'}]}}}); await harness.settle()
+  assert.equal(defenseToggle(root).props.checked,true)
+  const search=inputs(root,'search')[0]
+  change(search,'不存在'); harness.flush(); assert.ok(pageText(root).includes('没有匹配'))
+  change(inputs(root,'search')[0],'检索'); harness.flush(); assert.ok(defenseToggle(root))
+  harness.unmount(root); await harness.settle(); assert.equal(clock.pending(),0)
+})
+
+test('脱敏写入超时需重读，不能用未知结果再次写入', async () => {
+  const mock=createFetchMock(), clock=fakeClock(), status=baseStatus()
+  status.banks=[{id:'bank-a',name:'A',facts:0}]
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'安全',clock})
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:null}}); await harness.settle()
+  check(defenseToggle(root),true); harness.flush()
+  clock.expire(30000); await harness.settle()
+  assert.equal(defenseToggle(root).props.disabled,true)
+  assert.ok(pageText(root).includes('结果尚未确认'))
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:{enabled:true,rules:[{on:'sensitive_data',action:'redact'}]}}}); await harness.settle()
+  assert.equal(defenseToggle(root).props.checked,false,'late POST cannot claim confirmation')
+  click(buttonByText(root,'重读策略'))
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:{enabled:true,rules:[{on:'sensitive_data',action:'redact'}]}}}); await harness.settle()
+  assert.equal(defenseToggle(root).props.checked,true)
+  assert.equal(defenseToggle(root).props.disabled,false)
+  harness.unmount(root); await harness.settle(); assert.equal(clock.pending(),0)
+})
+
+test('缺失策略字段是未知，不是脱敏关闭；显式空策略可确认关闭', async () => {
+  const mock=createFetchMock(), status=baseStatus()
+  status.banks=[{id:'bank-a',name:'A',facts:0}]
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'安全'})
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a'}}); await harness.settle()
+  assert.equal(defenseToggle(root).props.disabled,true)
+  assert.ok(pageText(root).includes('缺少 memoryDefense'))
+  click(buttonByText(root,'重读策略'))
+  await mock.respond('/bankdefense',{payload:{bank:'bank-a',memoryDefense:null}}); await harness.settle()
+  assert.equal(defenseToggle(root).props.disabled,false)
+  harness.unmount(root); await harness.settle()
+})
+
+test('审计三态可返回继承；仅实际修改的分类带草稿标记', async () => {
+  const mock=createFetchMock(), status=baseStatus()
+  status.gui.auditLogEnabled=true
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'安全'})
+  const audit=hostNodes(root).find(n=>n.tag==='select'&&n.props['aria-label']==='审计日志')
+  change(audit,''); harness.flush()
+  assert.equal(textOfNode(tabByName(root,'安全')),'安全 ·')
+  assert.equal(textOfNode(tabByName(root,'模型')),'模型')
+  assert.equal(textOfNode(tabByName(root,'概览')),'概览')
+  click(buttonByText(root,'保存'))
+  assert.equal(JSON.parse(mock.last('/config').body).auditLogEnabled,null)
+  const saved=baseStatus(); saved.gui.auditLogEnabled=null
+  await mock.respond('/config',{payload:{...saved,saved:['auditLogEnabled']}}); await harness.settle()
+  assert.equal(textOfNode(tabByName(root,'安全')),'安全')
+  harness.unmount(root); await harness.settle()
+})
+
+test('失败重试和刷新期间也遵守启动门禁，预检失败不冒称归属未知', async () => {
+  const mock=createFetchMock(), status=baseStatus()
+  Object.assign(status.server,{ownership:'stopped',canStart:true,canRestart:false})
+  status.api.up=false
+  const {harness,root}=await mountPage(mock,{status,models:MODELS_OK,tab:'概览'})
+  click(buttonByText(root,'启动服务'))
+  await mock.respond('/server/start',{status:502,payload:{error:'synthetic launch failure'}}); await harness.settle()
+  assert.equal(buttonByText(root,'重试启动').props.disabled,true,'refresh in flight cannot authorize retry')
+  const managed=baseStatus(); managed.server.canRestart=false; managed.server.previewError='synthetic invalid configuration'
+  await mock.respond('/status',{payload:managed}); await harness.settle()
+  assert.equal(buttonByText(root,'重试启动').props.disabled,true)
+  assert.ok(pageText(root).includes('启动预检未通过'))
+  assert.ok(!pageText(root).includes('服务归属未知'))
+  harness.unmount(root); await harness.settle()
 })
 
 test('auditLogEnabled=null（继承）时保存其它字段不夹带 false', async () => {
@@ -1238,14 +1390,13 @@ test('聊天模型与 Provider 覆盖折叠不卸载草稿或已输入 Key', asy
   const { harness, root } = await mountPage(fetchMock, { status, models: MODELS_OK, tab: '模型' })
   assert.equal(detailsBySummary(root, '功能模型调用').props.open, true, 'chat route card starts expanded')
   assert.equal(detailsBySummary(root, 'Provider 覆盖').props.open, false, 'overrides start collapsed')
-  const chatSelect = () => hostNodes(root).find((n) => n.tag === 'select' && n.children.some((child) =>
-    child.kind === 'host' && child.tag === 'option' && textOfNode(child).includes('haiku')))
+  const chatSelect = () => inputs(root, 'text').find(n => n.props['aria-label'] === '勘察 CLI 模型标识')
   assert.ok(chatSelect())
-  change(chatSelect(), 'deepseek/deepseek-chat'); harness.flush()
+  change(chatSelect(), 'sonnet'); harness.flush()
   toggleDetails(harness, root, '功能模型调用')
   assert.equal(chatSelect(), undefined, 'collapsed chat field is not visible')
   toggleDetails(harness, root, '功能模型调用')
-  assert.equal(chatSelect().props.value, 'deepseek/deepseek-chat', 'chat model edit preserved')
+  assert.equal(chatSelect().props.value, 'sonnet', 'external CLI identifier survives collapse without DSH catalog mapping')
   toggleDetails(harness, root, 'Provider 覆盖')
   const password = () => inputs(root, 'password').find((n) => n.props.placeholder === '已保存 Key（输入以替换）')
   change(password(), 'example-unsaved-override-key'); harness.flush()
@@ -1257,7 +1408,7 @@ test('聊天模型与 Provider 覆盖折叠不卸载草稿或已输入 Key', asy
   click(buttonByText(root, '保存'))
   const body = JSON.parse(fetchMock.last('/config').body)
   assert.equal(body.providerOverrides.demo.apiKey, 'example-unsaved-override-key')
-  assert.equal(body.surveyModel, 'deepseek/deepseek-chat')
+  assert.equal(body.surveyModel, 'sonnet')
 })
 
 test('向量迁移风险只显示一次，鉴权和依赖警告仍然可见', async () => {
@@ -1310,6 +1461,41 @@ test('真实 Host 状态投影与客户端 CAS 向量保存契约联调（全 IO
   assert.equal(saved.body.gui.serverEmbeddings.secretConfigured,false)
   assert.equal(saved.body.server.embeddingPreview.secretConfigured,true)
   assert.ok(!JSON.stringify(saved.body).includes('SYNTHETIC_CONTRACT_KEY'))
+})
+
+test('保存仅发送变化意图，默认值和掩码URL不夹带回写', async () => {
+  const status=baseStatus()
+  status.gui.providerOverrides={demo:{baseUrl:'https://example.invalid/api_key=[REDACTED]',apiKeyEnv:'',secretConfigured:true}}
+  const fetchMock=createFetchMock()
+  const {harness,root}=await mountPage(fetchMock,{status,models:MODELS_OK,tab:'记忆与连接'})
+  const level=hostNodes(root).find(n=>n.tag==='select'&&n.children.some(c=>c.kind==='host'&&c.props.value==='warn'))
+  change(level,'warn'); harness.flush()
+  click(buttonByText(root,'保存'))
+  const body=JSON.parse(fetchMock.last('/config').body)
+  assert.deepEqual(Object.keys(body).sort(),['configRevision','guiRevision','logLevel'].sort())
+  assert.equal(body.logLevel,'warn')
+  const saved=baseStatus();saved.config.values.logLevel='warn'
+  await fetchMock.respond('/config',{payload:{...saved,saved:['logLevel']}});await harness.settle()
+  assert.ok(!pageText(root).includes('下一轮对话生效'))
+  assert.ok(pageText(root).includes('已有工作区可能需要重启DSH'))
+})
+test('活跃向量已保存仍保留其它Provider未提交草稿', async () => {
+  const fetchMock=createFetchMock()
+  const {harness,root}=await mountPage(fetchMock,{status:baseStatus(),models:MODELS_OK,tab:'模型'})
+  const provider=()=>hostNodes(root).find(n=>n.tag==='select'&&n.children.some(c=>c.kind==='host'&&c.props.value==='tei'))
+  change(provider(),'tei');harness.flush()
+  change(inputs(root,'text').find(n=>n.props.placeholder==='TEI 服务地址'),'http://localhost:8090');harness.flush()
+  change(provider(),'onnx');harness.flush()
+  change(inputs(root,'text').find(n=>n.props.placeholder==='ONNX 模型 ID'),'active-onnx');harness.flush()
+  click(buttonByText(root,'保存'))
+  const body=JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.serverEmbeddings.provider,'onnx')
+  const saved=baseStatus();saved.gui.serverEmbeddings={...saved.gui.serverEmbeddings,provider:'onnx',model:'active-onnx'}
+  await fetchMock.respond('/config',{payload:{...saved,saved:['serverEmbeddings']}});await harness.settle()
+  assert.ok(pageText(root).includes('其它向量Provider草稿已保留'))
+  assert.ok(pageText(root).includes('有未保存的更改'))
+  change(provider(),'tei');harness.flush()
+  assert.equal(inputs(root,'text').find(n=>n.props.placeholder==='TEI 服务地址').props.value,'http://localhost:8090')
 })
 
 let failed = 0

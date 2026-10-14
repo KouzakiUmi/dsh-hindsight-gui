@@ -109,15 +109,22 @@ export async function fixture(options = {}) {
     if (url.endsWith('/health')) return { ok: healthUp, status: healthUp ? 200 : 503, json: async () => ({ status: 'healthy' }) }
     if (init.method === 'PATCH') {
       const body = JSON.parse(init.body)
+      // Match the running API's BankConfigUpdate/OpenAPI contract: updates is
+      // a required object. The former permissive flat-body mock hid HTTP 422.
+      if (!body.updates || typeof body.updates !== 'object' || Array.isArray(body.updates)) {
+        return { ok: false, status: 422, json: async () => ({ detail: [{ loc: ['body', 'updates'], type: 'missing' }] }) }
+      }
       patches.push(body)
-      policy = body.memory_defense
+      policy = body.updates.memory_defense
       return { ok: true, status: 200, json: async () => ({ config: { memory_defense: policy } }) }
     }
     if (url.endsWith('/config')) return { ok: true, status: 200, json: async () => ({ config: { memory_defense: policy } }) }
     if (url.endsWith('/banks')) return { ok: true, status: 200, json: async () => ({ banks: [] }) }
     return { ok: true, status: 200, json: async () => ({}) }
   }
-  let source = original
+  // data: fixture modules have no relative base; dependencies still use injected I/O.
+  let source = original.replace(/from '(\.\/[^']+)'/g, (_match, relative) =>
+    `from '${new URL('../lib/' + relative.slice(2), import.meta.url).href}'`)
   const substitutions = [
     ["import { spawn } from 'node:child_process'", 'const { spawn } = globalThis.__hostFixture'],
     ["import { closeSync, existsSync, openSync, readSync } from 'node:fs'", 'const { closeSync, existsSync, openSync, readSync } = globalThis.__hostFixture.fs'],
@@ -433,6 +440,8 @@ await test('bank policy edits preserve custom/block rules and verify persisted r
   const f=await fixture()
   const on=await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:true})
   assert.equal(on.code,200)
+  assert.deepEqual(Object.keys(f.patches[0]),['updates'])
+  assert.deepEqual(Object.keys(f.patches[0].updates),['memory_defense'])
   assert.equal(f.policy.rules.length,3)
   assert.ok(f.policy.rules.some(r=>r.action==='block'&&r.on==='sensitive_data'))
   const off=await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:false})
@@ -442,10 +451,41 @@ await test('bank policy edits preserve custom/block rules and verify persisted r
   const invalid=await f.request('bankdefense',{bankId:'fixture-bank'})
   assert.equal(invalid.code,400)
 })
+await test('BankConfigUpdate rejects the old flat body; nested updates enable and disable redaction', async () => {
+  const originalPolicy = { enabled:false, rules:[] }
+  const f = await fixture({policy:originalPolicy})
+  const rejected = await globalThis.fetch('http://127.0.0.1:8888/v1/default/banks/fixture-bank/config',{
+    method:'PATCH',body:JSON.stringify({memory_defense:{enabled:true,rules:[{on:'sensitive_data',action:'redact'}]}}),
+  })
+  assert.equal(rejected.status,422)
+  assert.deepEqual((await rejected.json()).detail[0].loc,['body','updates'])
+  assert.equal(f.patches.length,0,'invalid request cannot persist a policy')
+  assert.deepEqual(f.policy,originalPolicy)
+  const on = await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:true})
+  assert.equal(on.code,200)
+  assert.deepEqual(on.body.memoryDefense,{enabled:true,rules:[{on:'sensitive_data',action:'redact'}]})
+  const off = await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:false})
+  assert.equal(off.code,200)
+  assert.deepEqual(off.body.memoryDefense,originalPolicy)
+  assert.equal(f.patches.length,2)
+})
+await test('upstream 422 is reported without leaking validation inputs or pretending a policy was saved', async () => {
+  let calls = 0
+  const f = await fixture({fetch:async (_url,init = {}) => {
+    calls++
+    if (init.method === 'PATCH') return {ok:false,status:422,json:async()=>({detail:[{loc:['body','updates'],input:{private:SECRET}}]})}
+    return {ok:true,status:200,json:async()=>({config:{memory_defense:{enabled:false,rules:[]}}})}
+  }})
+  const res = await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:true})
+  assert.equal(res.code,422)
+  assert.match(res.body.error,/HTTP 422/)
+  assert.ok(!JSON.stringify(res.body).includes(SECRET))
+  assert.equal(calls,2,'no confirmation GET after the rejected PATCH')
+})
 await test('failed bank policy read forbids PATCH and errors do not expose upstream body', async () => {
   const f=await fixture({fetch:async()=>({ok:false,status:403,json:async()=>({error:SECRET})})})
   const res=await f.request('bankdefense',{bankId:'fixture-bank',apiUrl:'http://127.0.0.1:8888',enabled:true})
-  assert.equal(res.code,500)
+  assert.equal(res.code,403,'preserve the authentication failure without returning its body')
   assert.equal(f.patches.length,0)
   assert.ok(!JSON.stringify(res.body).includes(SECRET))
 })
@@ -473,6 +513,20 @@ await test('spoofed loopback headers cannot authorize a non-loopback peer', asyn
   const res=await f.request('config',{disabled:true},{},'192.0.2.10')
   assert.equal(res.code,403)
   assert.equal(f.writes.length,0)
+})
+await test('audit override can return to inherited environment without changing other GUI keys', async () => {
+  const f=await fixture({gui:{auditLogEnabled:true,autoStart:true},env:{HINDSIGHT_API_AUDIT_LOG_ENABLED:'false'}})
+  const initial=(await f.request('status')).body
+  const saved=await f.request('config',{auditLogEnabled:null,guiRevision:initial.gui.revision})
+  assert.equal(saved.code,200)
+  assert.equal(saved.body.gui.auditLogEnabled,null)
+  const settings=JSON.parse(f.files.get(f.guiPath))
+  assert.equal(settings.autoStart,true)
+  assert.equal(settings.auditLogEnabled,null)
+  const built=await f.m.buildServerEnv(settings,f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_AUDIT_LOG_ENABLED,'false')
+  const invalid=await f.request('config',{auditLogEnabled:'inherit',guiRevision:saved.body.gui.revision})
+  assert.equal(invalid.code,400)
 })
 await test('saving default empty GUI settings does not request a restart', async () => {
   const f=await fixture({config:{},gui:{}})
@@ -652,6 +706,43 @@ await test('embedding inherited endpoint query remains unchanged while sensitive
   assert.equal(f.m.normalizeServerEmbeddings({provider:'openai',baseUrl:url}),null,'dedicated form remains stricter')
 })
 
+await test('official defaults and explicit false remain truthful without unrelated-save materialization', async () => {
+  const f=await fixture({config:{apiUrl:'http://127.0.0.1:8888',dynamicBankId:false}})
+  const status=(await f.request('status')).body
+  assert.equal(status.config.values.autoUpdate,true)
+  assert.equal(status.config.values.codebaseSurvey,true)
+  assert.equal(status.config.values.dynamicBankId,false)
+  const saved=await f.request('config',{apiUrl:'http://127.0.0.1:8890',configRevision:status.config.revision,guiRevision:status.gui.revision})
+  assert.equal(saved.code,200)
+  const raw=JSON.parse(f.files.get(f.configPath))
+  assert.ok(!Object.hasOwn(raw,'autoUpdate'))
+  assert.ok(!Object.hasOwn(raw,'codebaseSurvey'))
+  const env=await fixture({env:{HINDSIGHT_AUTO_UPDATE:'false',HINDSIGHT_CODEBASE_SURVEY:'off'}})
+  const projected=(await env.request('status')).body.config.values
+  assert.equal(projected.autoUpdate,false)
+  assert.equal(projected.codebaseSurvey,false)
+})
+await test('reflect scoped overrides beat old reflect environment without polluting explicit global fallback', async () => {
+  const f=await fixture({env:{HINDSIGHT_API_LLM_PROVIDER:'openai',HINDSIGHT_API_LLM_MODEL:'global-keep',HINDSIGHT_API_LLM_API_KEY:SECRET,HINDSIGHT_API_REFLECT_LLM_MODEL:'old-reflect'}})
+  const built=await f.m.buildServerEnv({serverModels:{default:'',reflect:'new-reflect'}},f.ctx)
+  assert.equal(built.env.HINDSIGHT_API_LLM_MODEL,'global-keep')
+  assert.equal(built.env.HINDSIGHT_API_REFLECT_LLM_MODEL,'new-reflect')
+  assert.equal(built.resolutions.find(row=>row.scope==='reflect').applied,true)
+  const legacy=await f.m.buildServerEnv({serverModels:{reflect:'legacy-reflect'}},f.ctx)
+  assert.equal(legacy.env.HINDSIGHT_API_LLM_MODEL,'legacy-reflect')
+  assert.equal(legacy.env.HINDSIGHT_API_REFLECT_LLM_MODEL,'legacy-reflect')
+  assert.match(legacy.resolutions.find(row=>row.scope==='default').note,/兼容旧/)
+})
+await test('redacted endpoint projection can never overwrite the original on partial provider edits', async () => {
+  const original='https://example.invalid/api_key=SYNTHETIC_PATH_VALUE/v1'
+  const f=await fixture({gui:{providerOverrides:{demo:{baseUrl:original}}}})
+  const status=(await f.request('status')).body
+  assert.ok(!status.gui.providerOverrides.demo.baseUrl.includes('SYNTHETIC_PATH_VALUE'))
+  const saved=await f.request('config',{providerOverrides:{demo:{apiKeyEnv:'SYNTHETIC_REFERENCE'}},configRevision:status.config.revision,guiRevision:status.gui.revision})
+  assert.equal(saved.code,200)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).providerOverrides.demo.baseUrl,original)
+  assert.equal(f.m.normalizeProviderOverrides({demo:{baseUrl:status.gui.providerOverrides.demo.baseUrl}}),null)
+})
 console.log(`Host offline regressions: ${passed} passed; no real service, credential, network or file-write operations.`)
 
 }

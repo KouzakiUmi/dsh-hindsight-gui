@@ -109,8 +109,9 @@ The page is split into five categories — 概览 (overview), 记忆与连接 (m
 - **自由切换自定义输入**：下拉列表不仅支持一键点选环境模型（格式为 `provider/model`），还支持随时切换到「自定义输入...」手动键入任意模型名（如 `deepseek-flash`）。
 - **暗色主题原生适配**：下拉选择框与弹出选项遵循 `color-scheme: dark`，与 DSH 客户端深色主题完全对齐。
 - **服务端各功能模型分工**：
-  - **代码库勘察（Survey）**：新仓库结构与规范分析，默认 `haiku`；保存至 `coding-agent.json`，下一轮对话立即生效。
-  - **反思推理（Reflect）**：响应 `hindsight_reflect` 深度记忆问答，推荐推理能力强的模型（默认继承启动环境或 Hindsight 的后端默认值）。
+  - **代码库勘察（Survey）**：新仓库结构与规范分析，默认 `haiku`；这是外部 CLI runner 的模型标识，并非 DSH 模型目录项。需已有且已认证的 CLI，参数支持取决于实际 runner，可能产生费用。本页不探测、安装或执行 CLI；已缓存工作区可能需重启 DSH 后重新初始化。
+  - **全局默认（Default）**：写入 `HINDSIGHT_API_LLM_*`，作为未配置独立作用域的回退。旧文件没有 `serverModels.default` 时兼容原 reflect 全局默认；显式保存 default（可留空继承环境）后脱钩。
+  - **反思推理（Reflect）**：写入独立 `HINDSIGHT_API_REFLECT_LLM_*`，覆盖已有 reflect 环境值而不污染显式全局默认；响应 `hindsight_reflect` 深度记忆问答，推荐推理能力强的模型（默认继承启动环境或 Hindsight 的后端默认值）。
   - **事实提取（Retain）**：高频对话事实提炼，推荐成本低、响应快且支持 JSON Schema 的模型（默认继承启动环境或后端默认值）。
   - **记忆整理（Consolidation）**：后台相似记忆去重聚合。
   - **知识提炼（Mental Model）**：刷新持久化知识库页面（架构图与概念规范）。
@@ -152,8 +153,8 @@ The **向量模型** card in the 模型 category configures Hindsight's own vect
 - **凭据解析链**：设置页 Provider 覆盖（Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → `ctx.credentials.resolve` 宿主凭据服务；不直接扫描凭据 YAML。状态仅显示来源或失败原因，不返回密钥。
 - **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。
 - **生效时机**：服务端设置下次成功启动时应用；运行配置只是本插件启动确认后的快照，不是第三方服务真实配置查询。外部实例的运行配置未知，`pendingRestart` 只对已确认的本插件实例有意义。
-- **审计日志**：`auditLogEnabled` 映射为 `HINDSIGHT_API_AUDIT_LOG_ENABLED`（部署级默认，可按 bank 在 Control Plane 覆盖）。
-- **脱敏（Memory Defense）**：按 bank 仅编辑本页持有的规范规则 `{on: sensitive_data, action: redact}`，保留其它更强或自定义规则；不能据此保证第三方服务原始日志或历史备份已清理。
+- **审计日志**：`auditLogEnabled` 映射为 `HINDSIGHT_API_AUDIT_LOG_ENABLED`（部署级默认，可按 bank 在 Control Plane 覆盖）。界面区分「继承启动环境」「开启」「关闭」；显式返回继承时保存 `null`，不把继承误显示为关闭。
+- **脱敏（Memory Defense）**：按 bank 仅编辑本页持有的规范规则 `{on: sensitive_data, action: redact}`，以 `{updates: {memory_defense: policy}}` 请求体调用 bank config PATCH，保留其它更强或自定义规则。开关即时写入，不依赖全局保存；读取失败可显式「重读策略」，写入超时或确认失败时结果未知，须重读后才能再次操作。不能据此保证第三方服务原始日志或历史备份已清理。
 - **环境变量透传**：`serverEnv`（配置文件高级透传；页面不直接编辑其值）仅允许 `HINDSIGHT_API_*`、`NO_PROXY`/`no_proxy`、`PYTHONUTF8` 字符串变量；页面明确设置的模型、审计和 Provider 等值优先于透传值。
 
 **两个地址与模型写进不同的文件**：`apiUrl` 和 `surveyModel` 是上游集成认识的键，必须留在 `coding-agent.json`；`controlPlaneUrl` 和 `serverModels` 存入插件自有配置文件 `~/.hindsight/dsh-hindsight-gui.json` 中。
@@ -171,11 +172,11 @@ The **向量模型** card in the 模型 category configures Hindsight's own vect
 
 ### 生效时机 / When a save takes effect
 
-记忆类设置（`disabled`、`bankId`、`surveyModel` 等）随集成每次 `loadConfig()` 重新读取，**下一轮对话**即生效，无需重启。
+记忆类设置（`disabled`、`bankId`、`surveyModel` 等）保存不代表运行已应用。官方 0.8.1 DSH 适配器缓存工作区 RuntimeCore；同一工作区新会话也不保证重新读取。已有工作区可能需重启 DSH 重新初始化，关闭后须核验是否停止召回/写回/工具注册。本页不私改官方缓存，也不承诺下一轮生效；API restart 不能重置 DSH 记忆适配器。基础表单编辑全局字段，DSH 专属覆盖须在记忆与隐私卡片查看。
 
 服务端设置（`serverModels`、`serverEmbeddings`、`auditLogEnabled`、`providerOverrides`、`serverEnv`、`serverCommand`）塑造的是**服务进程的环境**，在下次启动/重启时应用——页面会显示「pendingRestart」提示并提供重启按钮。向量预览同理由此产生：它显示的是已保存设置在下次启动时会解析成什么，不是草稿，也不是当前进程的真实配置。
 
-Memory-side settings take effect on the next turn — the integration re-reads the config file on every `loadConfig()` call. Server-side settings shape the server process environment and apply on the next start/restart; the page tracks that with a pending-restart banner and offers the button. The embedding preview comes from the same mechanism: it shows what the saved settings resolve to for the next launch — not the draft, and not the live process configuration.
+Saved memory-side configuration is not evidence of live application. The official 0.8.1 DSH adapter caches RuntimeCore by workspace; an existing workspace may require DSH reinitialization, and neither another session nor an API restart guarantees it. Server-side settings shape the server process environment and apply on the next start/restart; the page tracks that with a pending-restart banner and offers the button. The embedding preview comes from the same mechanism: it shows what the saved settings resolve to for the next launch — not the draft, and not the live process configuration.
 
 ---
 
