@@ -75,6 +75,7 @@ export async function fixture(options = {}) {
       commands.push({ command, args })
       const child = new EventEmitter()
       child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
       child.kill = () => {}
       if (options.hangQuery === command) return child // kill deliberately emits no close.
       queueMicrotask(async () => {
@@ -98,6 +99,9 @@ export async function fixture(options = {}) {
           }
         } else throw new Error('Unexpected system command: '+command)
         child.stdout.emit('data', text)
+        if (command === 'taskkill' && code !== 0) {
+          for (const chunk of options.stopStderr ?? []) child.stderr.emit('data', chunk)
+        }
         child.emit('close', code)
       })
       return child
@@ -273,6 +277,41 @@ await test('stop failure does not force-stop or spawn again', async () => {
   await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/不会强制/)
   assert.equal(f.launches.length,1)
   assert.ok(f.state.runningConfig)
+})
+await test('stop diagnostics retain split UTF-8 stderr and redact credentials', async () => {
+  const bytes = Buffer.from('错误：普通终止被拒绝。 api_key='+SECRET+'\nhttps://user:pass@example.invalid/\u001b[31m')
+  const f=await fixture({stopStderr:[bytes.subarray(0,2),bytes.subarray(2)]})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  f.setStopFailure(true)
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx), error => {
+    assert.equal(error.status,503)
+    assert.match(error.message,/taskkill.*code 1/)
+    assert.match(error.message,/普通终止被拒绝/)
+    assert.match(error.message,/手动关闭/)
+    assert.ok(!error.message.includes(SECRET))
+    assert.ok(!error.message.includes('user:pass'))
+    assert.ok(!error.message.includes('\u001b'))
+    return true
+  })
+  assert.equal(f.launches.length,1)
+  assert.ok(f.listeners.has(8888))
+})
+await test('stop stderr is bounded and unknown Windows encoding is not guessed', async () => {
+  for (const [chunks, expected] of [
+    [[], /stderr 为空/],
+    [[Buffer.from([0xd6,0xd0,0xce,0xc4])], /编码未知/],
+    [['x'.repeat(100000)], /已截断/],
+  ]) {
+    const f=await fixture({stopStderr:chunks})
+    await f.m.startServer(gui,config,f.state,f.ctx)
+    f.setStopFailure(true)
+    await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx), error => {
+      assert.match(error.message,expected)
+      assert.ok(error.message.length < 4500)
+      return true
+    })
+    assert.equal(f.launches.length,1)
+  }
 })
 await test('asynchronous spawn error is handled without unhandled error event', async () => {
   const f=await fixture()
