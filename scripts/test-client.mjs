@@ -490,6 +490,42 @@ test('保存成功重设 baseline；保存期间的新输入不丢失且保持 d
   assert.ok(!pageText(root).includes('有未保存的更改'), 'clean after second save')
 })
 
+test('健康 API 的控制握手失败会显示独立错误并禁止重启', async () => {
+  const fetchMock=createFetchMock()
+  const status=baseStatus()
+  status.server.controlReady=false
+  status.server.controlError='服务已启动，但协作控制握手失败'
+  status.server.canRestart=true // Client must still fail closed on explicit controlReady=false.
+  const {root}=await mountPage(fetchMock,{status,models:MODELS_OK,tab:'概览'})
+  assert.ok(pageText(root).includes('协作控制不可用'))
+  assert.ok(pageText(root).includes('协作控制握手失败'))
+  assert.equal(buttonByText(root,'重启服务').props.disabled,true)
+})
+
+test('Python 环境设置参与 CAS、草稿保护和保存期间编辑保留', async () => {
+  const fetchMock=createFetchMock()
+  const {harness,root}=await mountPage(fetchMock,{status:baseStatus(),models:MODELS_OK,tab:'概览'})
+  toggleDetails(harness,root,'启动选项与下次配置')
+  const input=()=>inputs(root,'text').find(node=>node.props['aria-label']==='Hindsight Python 解释器')
+  assert.equal(input().props.value,'')
+  change(input(),'/fixture/python.exe');harness.flush()
+  assert.ok(pageText(root).includes('有未保存的更改'))
+  click(buttonByText(root,'保存'));harness.flush()
+  const body=JSON.parse(fetchMock.last('/config').body)
+  assert.equal(body.serverPython,'/fixture/python.exe')
+  assert.equal(body.guiRevision,'gui-rev-1')
+  assert.ok(!('serverCommand' in body))
+  change(input(),'/fixture/other-python.exe');harness.flush()
+  const saved=baseStatus();saved.gui.serverPython='/fixture/python.exe';saved.gui.revision='gui-rev-2'
+  await fetchMock.respond('/config',{payload:{...saved,guiSaved:['serverPython']}})
+  await harness.settle()
+  assert.equal(input().props.value,'/fixture/other-python.exe')
+  assert.ok(pageText(root).includes('有未保存的更改'))
+  click(buttonByText(root,'放弃更改'));harness.flush()
+  assert.equal(input().props.value,'/fixture/python.exe')
+  assert.ok(!pageText(root).includes('有未保存的更改'))
+})
+
 test('保存发送 configRevision/guiRevision；409 冲突不丢草稿且提示需显式 discard', async () => {
   const fetchMock = createFetchMock()
   const { harness, root } = await mountPage(fetchMock, { status: baseStatus(), models: MODELS_OK })
@@ -844,7 +880,7 @@ test('启动请求永久挂起也会超时收尾；刷新失败不把旧 operati
   Object.assign(starting.server, { operation: 'start', canRestart: false, canStart: false })
   await fetchMock.respond('/status', { payload: starting })
   await harness.settle()
-  clock.expire(180000) // fetch ignores AbortSignal entirely: the race must still settle.
+  clock.expire(300000) // fetch ignores AbortSignal entirely: the race must still settle.
   await harness.settle()
   assert.ok(pageText(root).includes('请求超时或已取消'))
   await fetchMock.respond('/status', { status: 503, payload: { error: 'host unavailable' } })

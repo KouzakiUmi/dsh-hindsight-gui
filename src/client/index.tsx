@@ -418,6 +418,7 @@ function PanelPage() {
   const [auditDraft, setAuditDraft] = useState(null)
   const [autoStartDraft, setAutoStartDraft] = useState(false)
   const [serverCommandDraft, setServerCommandDraft] = useState('')
+  const [serverPythonDraft, setServerPythonDraft] = useState('')
   // Override drafts never carry the stored key: `apiKey` holds only what the
   // user just typed (empty = keep the stored key), `clearApiKey` asks to wipe.
   const [overridesDraft, setOverridesDraft] = useState({})
@@ -609,6 +610,7 @@ function PanelPage() {
       auditLogEnabled: data?.gui?.auditLogEnabled ?? null,
       autoStart: data?.gui?.autoStart === true,
       serverCommand: data?.gui?.serverCommand ?? '',
+      serverPython: data?.gui?.serverPython ?? '',
       providerOverrides: overrides,
       serverEmbeddings: toEmbeddingsDraft(data?.gui?.serverEmbeddings ?? EMPTY_EMBEDDINGS),
       configRevision: data?.config?.revision ?? null,
@@ -630,6 +632,7 @@ function PanelPage() {
     setAuditDraft(data?.gui?.auditLogEnabled ?? null)
     setAutoStartDraft(data?.gui?.autoStart === true)
     setServerCommandDraft(data?.gui?.serverCommand ?? '')
+    setServerPythonDraft(data?.gui?.serverPython ?? '')
     setOverridesDraft(overrides)
     const embedding = toEmbeddingsDraft(data?.gui?.serverEmbeddings ?? EMPTY_EMBEDDINGS)
     embeddingsCacheRef.current = { [embedding.provider]: embedding }
@@ -662,6 +665,7 @@ function PanelPage() {
     if ((auditDraft ?? null) !== base.auditLogEnabled) return true
     if (autoStartDraft !== base.autoStart) return true
     if ((serverCommandDraft ?? '') !== base.serverCommand) return true
+    if ((serverPythonDraft ?? '') !== base.serverPython) return true
     const emb = base.serverEmbeddings
     if (embeddingsDraft.provider !== emb.provider) return true
     const activeFields = embeddingsDraft.provider === 'openai' ? ['model', 'baseUrl', 'dimensions', 'apiKeyEnv']
@@ -692,7 +696,7 @@ function PanelPage() {
   const liveRef = useRef(null)
   useEffect(() => {
     dirtyRef.current = dirty
-    liveRef.current = { draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, embeddingsDraft }
+    liveRef.current = { draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, serverPythonDraft, overridesDraft, embeddingsDraft }
   })
 
   /**
@@ -774,7 +778,7 @@ function PanelPage() {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: '{}',
-    }, 180000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
+    }, 300000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
       .then((payload) => {
         if (!mountedRef.current) return
         autoStartFailuresRef.current = 0
@@ -876,6 +880,7 @@ function PanelPage() {
     if (auditDraft !== base?.auditLogEnabled) payloadBody.auditLogEnabled = auditDraft
     if (autoStartDraft !== base?.autoStart) payloadBody.autoStart = autoStartDraft
     if (serverCommandDraft !== base?.serverCommand) payloadBody.serverCommand = serverCommandDraft
+    if (serverPythonDraft !== base?.serverPython) payloadBody.serverPython = serverPythonDraft
     // Per-entry key semantics from the host contract: an omitted or empty
     // apiKey keeps the stored key, a non-empty one replaces it, and
     // clearApiKey:true wipes it. `secretConfigured` is display-only and never
@@ -950,6 +955,7 @@ function PanelPage() {
           && live.auditDraft === submitted.auditDraft
           && live.autoStartDraft === submitted.autoStartDraft
           && live.serverCommandDraft === submitted.serverCommandDraft
+          && live.serverPythonDraft === submitted.serverPythonDraft
           && live.overridesDraft === submitted.overridesDraft
           && live.embeddingsDraft === submitted.embeddingsDraft
           && embeddingsCacheRef.current === submitted.embeddingsCache
@@ -1009,7 +1015,7 @@ function PanelPage() {
         return false
       })
       .finally(() => { savingRef.current = false; if (mountedRef.current) setSaving(false) })
-  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, overridesDraft, embeddingsDraft, inactiveEmbeddingsDirty, snapshotBaseline, resetDrafts, toOverrideDraft, toEmbeddingsDraft])
+  }, [draft, cpDraft, serverModelsDraft, auditDraft, autoStartDraft, serverCommandDraft, serverPythonDraft, overridesDraft, embeddingsDraft, inactiveEmbeddingsDirty, snapshotBaseline, resetDrafts, toOverrideDraft, toEmbeddingsDraft])
 
   const discard = useCallback(() => {
     const data = status.data
@@ -1031,7 +1037,7 @@ function PanelPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: '{}',
-      }, 180000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
+      }, 300000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
         .then((payload) => {
           if (!mountedRef.current) return
           autoStartFailuresRef.current = 0
@@ -1118,7 +1124,7 @@ function PanelPage() {
   const canStartNow = !status.loading && status.error === null && (legacyHost ? api?.up !== true : server?.canStart === true)
   // A restart kills whatever listens on the port; without the host's ownership
   // verdict (legacy host) that could be someone else's process — default deny.
-  const canRestartNow = !status.loading && status.error === null && !legacyHost && server?.canRestart === true
+  const canRestartNow = !status.loading && status.error === null && !legacyHost && server?.canRestart === true && server?.controlReady !== false
   const operationInFlight = saving || serverBusy !== null || (server !== null && server.operation != null)
 
   /**
@@ -1152,7 +1158,7 @@ function PanelPage() {
     const base = baselineRef.current
     if (!dirty || !base || !draft) return false
     const changed = (keys) => keys.some((key) => draft[key] !== base.configValues[key])
-    if (tab === 'overview') return autoStartDraft !== base.autoStart || serverCommandDraft !== base.serverCommand
+    if (tab === 'overview') return autoStartDraft !== base.autoStart || serverCommandDraft !== base.serverCommand || serverPythonDraft !== base.serverPython
     if (tab === 'memory') return changed(['disabled', 'apiUrl', 'logLevel', 'bankId', 'dynamicBankId']) || cpDraft !== base.controlPlaneUrl
     if (tab === 'security') return auditDraft !== base.auditLogEnabled
     if (tab === 'advanced') return changed(['autoUpdate', 'codebaseSurvey'])
@@ -1253,6 +1259,8 @@ function PanelPage() {
             </div>
           </div>
 
+          {server.controlError && <div className={PREFIX + 'errbanner'}><span>协作控制不可用：{server.controlError}</span></div>}
+
           {server.ownership !== undefined && (
             <Row label="归属">
               <Pill tone={server.ownership === 'managed' ? 'ok' : 'warn'}>
@@ -1343,7 +1351,17 @@ function PanelPage() {
               <input className={PREFIX + 'input'} type="text" aria-label="服务启动命令覆盖" value={serverCommandDraft}
                 placeholder="留空 = 自动发现（PATH → uv/pip 默认安装位置）"
                 onChange={(event) => setServerCommandDraft(event.target.value)} />
-              <span className={PREFIX + 'hint'}>hindsight-api 可执行文件的完整路径；仅当自动发现失败时需要填写。</span>
+              <span className={PREFIX + 'hint'}>用于定位相邻的 Python 环境；填写下方解释器后优先使用解释器，不再通过此命令启动。</span>
+            </div>
+          </div>
+
+          <div className={PREFIX + 'field'}>
+            <span className={PREFIX + 'label'}>Hindsight Python 环境</span>
+            <div className={PREFIX + 'control'}>
+              <input className={PREFIX + 'input'} type="text" aria-label="Hindsight Python 解释器" value={serverPythonDraft}
+                placeholder="已安装 hindsight-api 的 Python 解释器完整路径"
+                onChange={(event) => setServerPythonDraft(event.target.value)} />
+              <span className={PREFIX + 'hint'}>留空仅尝试启动入口旁的 python；无法确认时拒绝启动，不猜测其它环境。当前协作关闭适配 Hindsight 0.10.2、单 worker；已有 HTTP 扩展时不会覆盖。</span>
             </div>
           </div>
 

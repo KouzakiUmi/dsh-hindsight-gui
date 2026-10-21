@@ -111,7 +111,9 @@ if (sourceTime > bundleTime) {
 }
 
 // --- syntax check every shipped JS ---------------------------------------
-for (const relative of ['lib/index.js', 'lib/client.cjs', 'scripts/build-client.mjs']) {
+if (!existsSync(join(root, 'lib/python/dsh_hindsight_control.py'))) problems.push('missing Python cooperative-control adapter')
+if (globSync('lib/**/*.pyc', { cwd: root }).length) problems.push('generated Python bytecode must not ship')
+for (const relative of new Set([...globSync('lib/**/*.js', { cwd: root }), 'lib/client.cjs', 'scripts/build-client.mjs'])) {
   try {
     execFileSync(process.execPath, ['--check', join(root, relative)], { stdio: 'ignore' })
   } catch (error) {

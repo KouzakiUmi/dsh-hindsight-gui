@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { pathToFileURL } from 'node:url'
+import { resolveServiceEntry } from '../lib/service-control.js'
 
 const original = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
 let moduleId = 0
@@ -19,6 +20,7 @@ export async function fixture(options = {}) {
   const children = new Map()
   const writes = []
   const commands = []
+  const controlRequests = []
   const launches = []
   const patches = []
   const routes = new Map()
@@ -32,10 +34,11 @@ export async function fixture(options = {}) {
   let beforeRead = null
   let beforeWrite = null
   const missing = () => Object.assign(new Error('mock missing file'), { code: 'ENOENT' })
+  const isPython = path => String(path).replaceAll(String.fromCharCode(92), '/') === '/fixture/python.exe'
   const f = {
     process: { env: { HINDSIGHT_CONFIG: configPath, HINDSIGHT_GUI_CONFIG: guiPath, ...options.env }, platform: 'win32', pid: 123 },
     fs: {
-      existsSync: path => path === '/fixture/api.exe',
+      existsSync: path => path === '/fixture/api.exe' || isPython(path),
       openSync: () => 7, closeSync() {},
       readSync: (_fd, buffer) => { const text = Buffer.from(options.log ?? 'Error: synthetic'); text.copy(buffer); return text.length },
     },
@@ -46,10 +49,32 @@ export async function fixture(options = {}) {
       copyFile: async (path, target) => { if (!files.has(path)) throw missing(); files.set(target, files.get(path)) },
       rename: async (path, target) => { if (!files.has(path)) throw missing(); files.set(target, files.get(path)); files.delete(path) },
       unlink: async path => { if (!files.delete(path)) throw missing() },
-      stat: async path => ({ size: Buffer.byteLength(options.log ?? 'Error: synthetic'), isFile: () => path === '/fixture/api.exe' }),
+      stat: async path => ({ size: Buffer.byteLength(options.log ?? 'Error: synthetic'), isFile: () => path === '/fixture/api.exe' || isPython(path) }),
+    },
+    serviceControl: {
+      assertPrivateReceipt: async () => { if (options.unsafeReceipt) throw new Error('控制令牌记录不是私有文件；拒绝启用') },
+      writePrivateReceipt: async (path,data) => f.fsp.writeFile(path,data),
+      prepareServiceLaunch: async (_gui, entry, target, env) => {
+        if (options.preflightFailure) throw new Error('进程内控制预检失败；检查Python、版本或HTTP扩展；未停止原服务')
+        await f.serviceControl.assertPrivateReceipt()
+        const effectiveEntry=resolveServiceEntry(_gui,entry,'win32')
+        const control=options.cooperative ? {version:1,kind:'http',base:target.base,token:'c'.repeat(64),nonce:'a'.repeat(32)} : null
+        return {command:effectiveEntry.command, entry:effectiveEntry, detached:true,
+          args:['/fixture/dsh_hindsight_control.py','--port',String(target.port)],
+          env:control ? {...env,DSH_HINDSIGHT_CONTROL_TOKEN:control.token,DSH_HINDSIGHT_CONTROL_NONCE:control.nonce,DSH_HINDSIGHT_CONTROL_PORT:String(target.port)} : env,control}
+      },
+      requestServiceControl: async (control, identity, action) => {
+        controlRequests.push({ control: structuredClone(control), identity, action })
+        if (options.controlFailure || options.controlMismatch) throw new Error('服务协作关闭通道不可用或身份不符；不会强制终止或重复启动')
+        if (action === 'stop') {
+          for (const [port, pid] of listeners) if (pid === identity.pid) listeners.delete(port)
+          identities.delete(identity.pid)
+        }
+        return {version:1,pid:identity.pid,nonce:control.nonce,stopping:action==='stop'}
+      },
     },
     spawn(command, args) {
-      if (command === '/fixture/api.exe') {
+      if (command === '/fixture/api.exe' || isPython(command)) {
         const child = new EventEmitter()
         child.pid = failSpawn ? undefined : ++nextPid
         child.exitCode = null
@@ -60,7 +85,7 @@ export async function fixture(options = {}) {
         else {
           identities.set(child.pid, { pid: child.pid, executable: '/fixture/api.exe', started: 'identity-'+child.pid })
           listeners.set(Number(args.at(-1)), options.launcher ? child.pid + 1 : child.pid)
-          if (options.descendant) {
+          if (options.descendant || options.cooperative) {
             const middle = child.pid + 1000
             const listener = child.pid + 2000
             identities.set(middle, { pid: middle, parentPid: child.pid, executable: '/fixture/python-launcher.exe', started: '2026-10-13T09:00:01Z' })
@@ -76,6 +101,9 @@ export async function fixture(options = {}) {
       const child = new EventEmitter()
       child.stdout = new EventEmitter()
       child.stderr = new EventEmitter()
+      child.stdin = new EventEmitter()
+      const record=commands.at(-1)
+      child.stdin.end = input => { record.input=input; if(options.inputFailure) child.stdin.emit('error',new Error(SECRET)) }
       child.kill = () => {}
       if (options.hangQuery === command) return child // kill deliberately emits no close.
       queueMicrotask(async () => {
@@ -86,8 +114,11 @@ export async function fixture(options = {}) {
           if (failQuery) code = 1
           else text = [...listeners].map(([port,pid]) => `  TCP    127.0.0.1:${port}    0.0.0.0:0    LISTENING    ${pid}`).join('\n')
         } else if (command === 'powershell.exe') {
-          const pid = Number(args.at(-1).match(/ProcessId = (\d+)/)?.[1])
-          text = identities.has(pid) ? JSON.stringify(identities.get(pid)) : ''
+          if (args.includes('-Preflight')) code = options.preflightFailure ? 1 : 0
+          else {
+            const pid = Number(args.at(-1).match(/ProcessId = (\d+)/)?.[1])
+            text = identities.has(pid) ? JSON.stringify(identities.get(pid)) : ''
+          }
         } else if (command === 'taskkill') {
           assert.ok(!args.includes('/F'))
           if (stopFailure) code = 1
@@ -97,7 +128,8 @@ export async function fixture(options = {}) {
             identities.delete(pid)
             children.get(pid)?.emit('exit', 0, null)
           }
-        } else throw new Error('Unexpected system command: '+command)
+        } else if (command === 'stdin-fixture') text='input accepted'
+        else throw new Error('Unexpected system command: '+command)
         child.stdout.emit('data', text)
         if (command === 'taskkill' && code !== 0) {
           for (const chunk of options.stopStderr ?? []) child.stderr.emit('data', chunk)
@@ -131,6 +163,8 @@ export async function fixture(options = {}) {
     `from '${new URL('../lib/' + relative.slice(2), import.meta.url).href}'`)
   const substitutions = [
     ["import { spawn } from 'node:child_process'", 'const { spawn } = globalThis.__hostFixture'],
+    [`import { prepareServiceLaunch, requestServiceControl, validServiceControl, assertPrivateReceipt, writePrivateReceipt, resolveServiceEntry } from '${new URL('../lib/service-control.js', import.meta.url).href}'`,
+      `const { prepareServiceLaunch, requestServiceControl, assertPrivateReceipt, writePrivateReceipt } = globalThis.__hostFixture.serviceControl; import { validServiceControl, resolveServiceEntry } from '${new URL('../lib/service-control.js', import.meta.url).href}'`],
     ["import { closeSync, existsSync, openSync, readSync } from 'node:fs'", 'const { closeSync, existsSync, openSync, readSync } = globalThis.__hostFixture.fs'],
     ["import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'", 'const { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } = globalThis.__hostFixture.fsp'],
     ["import { homedir } from 'node:os'", "const homedir = () => '/fixture'"],
@@ -164,7 +198,7 @@ export async function fixture(options = {}) {
     await pending
     return res
   }
-  return { m, state, ctx, files, configPath, guiPath, listeners, identities, launches, writes, patches, commands, request,
+  return { m, state, ctx, files, configPath, guiPath, listeners, identities, launches, writes, patches, commands, controlRequests, request,
     setFailQuery: value => { failQuery = value }, setStopFailure: value => { stopFailure = value }, setFailSpawn: value => { failSpawn = value },
     setHealth: value => { healthUp = value }, setBeforeRead: fn => { beforeRead = fn }, setBeforeWrite: fn => { beforeWrite = fn },
     get disposed() { return disposed }, get policy() { return policy } }
@@ -249,6 +283,135 @@ await test('managed restart verifies identity and requests non-force termination
   assert.notEqual(f.state.managedPid,oldPid)
   assert.deepEqual(f.commands.find(c=>c.command==='taskkill').args,['/PID',String(oldPid)])
   assert.ok(f.state.runningConfig)
+})
+await test('private writer input travels through stdin and EPIPE diagnostics never echo it', async () => {
+  const f=await fixture()
+  assert.equal(await f.m.execCapture('stdin-fixture',[],8000,{input:SECRET}),'input accepted')
+  assert.equal(f.commands[0].input,SECRET)
+  assert.ok(!f.commands[0].args.includes(SECRET))
+  const failed=await fixture({inputFailure:true})
+  await assert.rejects(failed.m.execCapture('stdin-fixture',[],8000,{input:SECRET}),error=>{assert.match(error.message,/输入通道/);assert.ok(!error.message.includes(SECRET));return true})
+})
+await test('Python interpreter settings validate, project safely and participate in pending restart', async () => {
+  const f=await fixture()
+  const before=await f.request('status')
+  const invalid=await f.request('config',{serverPython:42,guiRevision:before.body.gui.revision})
+  assert.equal(invalid.code,400)
+  const saved=await f.request('config',{serverPython:' /fixture/python.exe ',guiRevision:before.body.gui.revision})
+  assert.equal(saved.code,200)
+  assert.equal(saved.body.gui.serverPython,'/fixture/python.exe')
+  assert.equal(saved.body.gui.pendingRestart,true)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).serverPython,'/fixture/python.exe')
+  assert.equal(f.launches.length,0)
+})
+await test('control capability never appears in status or action responses', async () => {
+  const f=await fixture({cooperative:true})
+  const action=await f.m.startServer(gui,config,f.state,f.ctx)
+  const token=f.state.serviceControl.token
+  const status=await f.request('status')
+  assert.ok(!JSON.stringify(action).includes(token))
+  assert.ok(!JSON.stringify(status.body).includes(token))
+  assert.ok(!JSON.stringify(status.body).includes('DSH_HINDSIGHT_CONTROL_TOKEN'))
+})
+await test('in-process restart verifies service identity, retains private receipt and never calls taskkill', async () => {
+  const f = await fixture({cooperative:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const originalControl = structuredClone(f.state.serviceControl)
+  assert.equal(originalControl.kind,'http')
+  assert.equal(originalControl.base,config.apiUrl)
+  const receipt = JSON.parse(f.files.get(f.guiPath+'.server.json'))
+  assert.deepEqual(receipt.serviceControl,originalControl)
+  await f.m.restartServer(gui,config,f.state,f.ctx)
+  assert.equal(f.launches.length,2)
+  assert.equal(f.controlRequests.filter(r=>r.action==='stop').length,1)
+  assert.deepEqual(f.controlRequests.find(r=>r.action==='stop').control,originalControl)
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+})
+await test('Python/version/extension preflight failure preserves a running server', async () => {
+  const options = {cooperative:true}
+  const f = await fixture(options)
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const pid = f.state.managedPid
+  options.preflightFailure = true
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx), error => {
+    assert.equal(error.status,503)
+    assert.match(error.message,/Python.*版本.*HTTP/)
+    assert.match(error.message,/未停止原服务/)
+    return true
+  })
+  assert.equal(f.launches.length,1)
+  assert.equal(f.listeners.get(8888),pid)
+  assert.ok(f.state.runningConfig)
+  assert.equal(f.controlRequests.filter(r=>r.action==='stop').length,0)
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+  const fresh = await fixture({cooperative:true,preflightFailure:true})
+  await assert.rejects(fresh.m.startServer(gui,config,fresh.state,fresh.ctx),/预检失败/)
+  assert.equal(fresh.launches.length,0)
+})
+await test('cooperative receipt survives manager recovery and retains its exact shutdown channel', async () => {
+  const f=await fixture({cooperative:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const control=structuredClone(f.state.serviceControl)
+  f.identities.delete(123)
+  globalThis.__hostFixture.process.pid=124
+  f.identities.set(124,{pid:124,executable:'/fixture/dsh.exe',started:'2026-10-13T10:00:00Z'})
+  const recovered=f.m.createServerState()
+  assert.equal((await f.m.ownershipView(recovered,f.m.apiTarget(config))).ownership,'managed')
+  assert.deepEqual(recovered.serviceControl,control)
+  await f.m.restartServer(gui,config,recovered,f.ctx)
+  assert.deepEqual(f.controlRequests.find(r=>r.action==='stop').control,control)
+  assert.equal(f.launches.length,2)
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+})
+await test('corrupt cooperative receipt never opens a shutdown channel', async () => {
+  const f=await fixture({cooperative:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const receipt=JSON.parse(f.files.get(f.guiPath+'.server.json'))
+  receipt.serviceControl.base='https://attacker.invalid'
+  f.files.set(f.guiPath+'.server.json',JSON.stringify(receipt))
+  const view=await f.m.ownershipView(f.m.createServerState(),f.m.apiTarget(config))
+  assert.equal(view.ownership,'unknown')
+  assert.equal(view.canRestart,false)
+  assert.match(view.ownershipError,/协作关闭记录无效/)
+  assert.equal(f.controlRequests.filter(r=>r.action==='stop').length,0)
+})
+await test('cooperative shutdown channel failure never falls back to kill or relaunch', async () => {
+  const f = await fixture({cooperative:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  f.state.disposed = true
+  f.state.controller.abort() // A disposed controller cannot issue any new shutdown request.
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/卸载/)
+  assert.equal(f.launches.length,1)
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+  const options = {cooperative:true}
+  const failing = await fixture(options)
+  await failing.m.startServer(gui,config,failing.state,failing.ctx)
+  const pid = failing.state.managedPid
+  options.controlFailure = true
+  await assert.rejects(failing.m.restartServer(gui,config,failing.state,failing.ctx),/通道不可用/)
+  assert.equal(failing.launches.length,1)
+  assert.ok(!failing.commands.some(c=>c.command==='taskkill'))
+  assert.equal(failing.listeners.get(8888),pid)
+})
+await test('in-process shutdown rejects a reused listener identity', async () => {
+  const f = await fixture({cooperative:true})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  f.identities.get(f.state.managedPid).started='reused-pid'
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/身份|非本插件|不属于/)
+  assert.equal(f.controlRequests.filter(r=>r.action==='stop').length,0)
+  assert.equal(f.launches.length,1)
+  assert.ok(!f.commands.some(c=>c.command==='taskkill'))
+})
+await test('unprotected control receipts stop restart before any shutdown request', async () => {
+  const options={cooperative:true}
+  const f=await fixture(options)
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const pid=f.state.managedPid
+  options.unsafeReceipt=true
+  await assert.rejects(f.m.restartServer(gui,config,f.state,f.ctx),/私有/)
+  assert.equal(f.controlRequests.filter(r=>r.action==='stop').length,0)
+  assert.equal(f.listeners.get(8888),pid)
+  assert.equal(f.launches.length,1)
 })
 await test('PID reuse, unknown process identity and listener replacement are not owned', async () => {
   const f=await fixture()
@@ -463,6 +626,62 @@ await test('effective launch fingerprint tracks pending changes without stale cl
   assert.equal((await f.m.collect(f.ctx,f.state)).server.pendingRestart,false)
   f.files.set(f.guiPath,JSON.stringify({...gui,auditLogEnabled:true}))
   assert.equal((await f.m.collect(f.ctx,f.state)).server.pendingRestart,true)
+})
+await test('automatic Python entry stays consistent with preview and clears pending restart', async () => {
+  const f=await fixture({cooperative:true,gui})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  const view=await f.m.collect(f.ctx,f.state)
+  assert.ok(f.state.entry.command.endsWith('python.exe'))
+  assert.equal(view.server.entry.command,f.state.entry.command)
+  assert.equal(view.server.pendingRestart,false)
+  assert.equal(view.server.controlReady,true)
+  assert.equal(f.launches[0].args[0],'/fixture/dsh_hindsight_control.py')
+})
+await test('healthy API with failed control handshake is not confirmed by late polling or recovery', async () => {
+  const f=await fixture({cooperative:true,controlFailure:true,gui})
+  await assert.rejects(f.m.startServer(gui,config,f.state,f.ctx),error=>error.status===503 && /协作控制握手失败/.test(error.message))
+  assert.equal(f.state.runningConfig,null)
+  assert.ok(f.files.has(f.guiPath+'.server.json'),'retain ownership evidence to prevent duplicate launch')
+  const first=await f.m.collect(f.ctx,f.state)
+  const recovered=(await f.request('status')).body
+  for(const view of [first,recovered]){
+    assert.equal(view.api.up,true)
+    assert.equal(view.server.controlReady,false)
+    assert.equal(view.server.runtimeConfigKnown,false)
+    assert.equal(view.server.canRestart,false)
+    assert.match(view.server.controlError,/协作控制握手失败/)
+  }
+  assert.equal(f.state.runningConfig,null)
+  assert.equal(f.launches.length,1)
+  assert.ok(f.controlRequests.every(request=>request.action==='identity'))
+})
+await test('unhealthy API remains restartable when its owned control channel is valid', async () => {
+  const f=await fixture({cooperative:true,gui})
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  f.setHealth(false)
+  const status=await f.m.collect(f.ctx,f.state)
+  assert.equal(status.api.up,false)
+  assert.equal(status.server.controlReady,true)
+  assert.equal(status.server.canRestart,true)
+  assert.equal(status.server.controlError,null)
+})
+await test('control failure after readiness revokes restart until a fresh successful handshake', async () => {
+  const options={cooperative:true,gui}
+  const f=await fixture(options)
+  await f.m.startServer(gui,config,f.state,f.ctx)
+  options.controlFailure=true
+  const failed=await f.m.collect(f.ctx,f.state)
+  assert.equal(failed.server.controlReady,false)
+  assert.equal(failed.server.canRestart,false)
+  assert.equal(failed.server.runtimeConfigKnown,false)
+  options.controlFailure=false
+  const restored=await f.m.collect(f.ctx,f.state)
+  assert.equal(restored.server.controlReady,true)
+  assert.equal(restored.server.controlError,null)
+  assert.equal(restored.server.canRestart,true)
+  assert.equal(restored.server.runtimeConfigKnown,true)
+  assert.equal(restored.server.pendingRestart,false)
+  assert.equal(f.launches.length,1)
 })
 await test('external write conflicts and dispose prevent late config rename', async () => {
   const f=await fixture()

@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Replace the unreleased PowerShell console supervisor with an official Hindsight HTTP extension for in-process graceful shutdown. Fence requests by loopback, Host/Origin, a dedicated random capability, PID and launch nonce; raise SIGTERM once inside Python, never externally force-kill or broadcast.
+- Add an explicit Hindsight Python interpreter setting with CAS and draft protection. Preflight Hindsight 0.10.2, one worker, the existing HTTP extension slot and private receipt creation before stopping a service; respect entrypoint `.env` loading, reject overrides of supplied launch variables, and prevent replacement of host-generated control credentials.
+- Persist recovery capabilities only in protected ownership receipts: Windows applies a current-user/SYSTEM/Administrators DACL at new-file creation, while POSIX uses exclusive `0600` creation. Secrets travel through stdin, not arguments; directory and old configuration ACLs are not changed.
+- Add offline and opt-in native regressions for authenticated identity/stop, cancellation, bounded responses, `.env` precedence, extension conflicts, one real in-process SIGTERM, lifespan cleanup and private file creation. Native tests use disposable ASGI fixtures without MemoryEngine, database or model calls; production Hindsight restart/deployment is not part of this validation.
+
+### Fixed
+
+- Share effective Python entry resolution between launch fingerprints and status previews so automatic discovery does not leave an unchanged service permanently pending restart.
+- Require the control identity handshake for startup, late readiness, manager recovery and restart eligibility; distinguish a healthy API with unavailable control from a health timeout, retaining ownership evidence without confirming readiness.
+- Ignore genuinely inherit-only ACL rules when assessing the current object, while still rejecting effective foreign writes, readable secret files and null DACLs.
+- Send control headers through one-use direct IPv4 HTTP connections, isolated from global fetch/Agent/proxy configuration; retain cancellation, strict bounded responses and no-redirect/no-retry behavior.
+- Add real-Node zero-connection proxy regression and Windows in-memory ACL matrices alongside Host/client failure-path regressions.
+- Stop client builds on access/IPC policy refusals instead of retrying through the legacy CLI fallback.
+
 ## [1.4.0] - 2026-10-14
 
 ### Added

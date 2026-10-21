@@ -27,8 +27,9 @@ try {
   })
   built = true
 } catch (err) {
-  // Under the Windows sandbox, node-to-binary IPC pipe may fail with EPERM.
-  // Fall back to invoking the esbuild CLI directly with stdio: 'inherit'.
+  // Access/IPC policy refusals must stop here, never retry through another route.
+  if (['EACCES', 'EPERM'].includes(err?.code) || /\b(?:EACCES|EPERM|sandbox.*denied)\b/i.test(String(err?.message))) throw err
+  // Legacy API availability errors may use the already-installed CLI.
   const esbuildBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild')
   const cliArgs = [
     entry,

@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
-    "test": "node scripts/test-host.mjs && node scripts/test-client.mjs && node scripts/test-management-runtime.mjs && node scripts/test-management-gateway.mjs && node scripts/test-management.mjs && node scripts/test-transfers.mjs"
+    "test": "node scripts/test-host.mjs && node scripts/test-service-control-unit.mjs && node scripts/test-service-control-proxy.mjs && node scripts/test-receipt-acl-memory.mjs && node scripts/test-client.mjs && node scripts/test-management-runtime.mjs && node scripts/test-management-gateway.mjs && node scripts/test-management.mjs && node scripts/test-transfers.mjs"
   },
   "keywords": [
     "dsh",

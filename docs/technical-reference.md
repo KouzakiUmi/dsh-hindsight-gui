@@ -81,7 +81,7 @@ Edits `~/.hindsight/coding-agent.json` and this plugin's own `~/.hindsight/dsh-h
 | Provider 覆盖 / Provider overrides | 为非内置 Provider 填 openai 兼端点与凭据（Base URL / API Key / 环境变量名） | `providerOverrides` → `dsh-hindsight-gui.json` |
 | 服务管理 / Service management | **启动服务 / 重启服务**按钮 | 动作（不写配置） |
 | 服务管理 / Service management | API 未运行时自动拉起 | `autoStart` → `dsh-hindsight-gui.json` |
-| 服务管理 / Service management | 启动命令覆盖（hindsight-api 完整路径，留空自动发现） | `serverCommand` → `dsh-hindsight-gui.json` |
+| 服务管理 / Service management | Hindsight Python 解释器（优先使用）；旧命令入口仅用于定位相邻 Python | `serverPython`、`serverCommand` → `dsh-hindsight-gui.json` |
 | 安全 / Security | 审计日志开关（`HINDSIGHT_API_AUDIT_LOG_ENABLED`） | `auditLogEnabled` → `dsh-hindsight-gui.json` |
 | 记忆库 / Banks | 按 bank 开关脱敏（Memory Defense：sensitive_data → redact） | bank config API（不落盘到本页文件） |
 | 其他 / Other | 自动更新运行时 | `autoUpdate` → `coding-agent.json` |
@@ -146,9 +146,13 @@ The **向量模型** card in the 模型 category configures Hindsight's own vect
 
 插件自带受控的本机服务管理；本页保存的设置是下次插件启动的输入，不代表外部服务已经采用这些设置：
 
-- **启动 / 重启按钮**：host 查找已安装的 `hindsight-api`（`serverCommand` → `PATH` → 常见 uv/pip 位置），启动后轮询 `/health`（90 秒启动检查窗口）。Windows uv/pip 启动器与 Python 监听进程可有不同 PID；插件沿父进程链核验到原启动器的 PID、操作系统启动时间与可执行路径，而非仅凭端口或程序名称接管。Windows 仅使用不带 `/F` 的 `taskkill /PID` 温和尝试，失败须手动关闭，没有强制回退。
+- **启动 / 重启按钮**：优先使用显式 `serverPython`，否则只尝试所发现 `hindsight-api` 入口旁的 Python，不猜测其它环境或安装依赖。由该解释器执行随包的 Python 入口适配器，预检当前支持的 Hindsight 0.10.2、单 worker、HTTP 扩展空槽、`.env` 是否覆盖已传入的启动变量，以及控制记录创建能力，再允许停止旧服务。预检的 Python 导入预算为 60 秒；启动后轮询 `/health`，保留 90 秒启动检查窗口。Windows 虚拟环境解释器与真实 Python 监听进程可有不同 PID；插件沿父进程链核验 PID、启动时间和可执行路径，不凭端口接管。旧版实例没有新控制通道，仍只尝试不带 `/F` 的 `taskkill /PID`；失败需手动关闭一次。没有部署或自动迁移旧实例。
 - **DSH 重启后恢复管理**：插件在 GUI 配置路径后追加 `.server.json` 保存归属记录和不含密钥的启动快照。新实例重新核验服务 PID、启动时间和可执行路径；旧 DSH 仍存活时不会争抢。PID 被复用、记录损坏或无记录的外部实例不会自动接管。旧版已遗留且无记录的服务需用户手动关闭，再由新版插件首次启动生成记录；本页不自动迁移或追认它。
-- **有界等待与迟到就绪**：系统查询超时直接结束等待，不依赖杀掉查询子进程后一定出现 `close`。浏览器状态请求最长等待 30 秒，启动/重启请求最长等待 180 秒（包含预检与状态汇总）；失败主动刷新，慢轮询不会被每 15 秒的新请求挤掉。超时不等于服务已退出，插件保留身份记录以防重复启动；后续状态确认健康时使用原启动快照，而不是冒称已应用新保存的配置。
+- **服务内部协作关闭**：官方 `HttpExtension` 提供 `/ext/dsh-control/identity` 与 `/ext/dsh-control/stop`。请求必须同时满足回环来源、正确 Host、无 Origin、单个专用随机令牌、目标 PID 和每次启动的 nonce；响应也须匹配身份。仅由 Python 本进程调用一次 `signal.raise_signal(SIGTERM)`，交由 Uvicorn 正常退出和执行 lifespan 清理；不是 Windows 上会强杀的 `os.kill(pid, SIGTERM)`。控制客户端使用独占的一次性 HTTP Agent，固定直连 IPv4 回环，不继承全局 fetch、Agent、HTTP 代理或 DNS 解析；原始 Host 仍用于路由身份校验。请求不跟随重定向、不重试，响应预算 4 KiB、5 秒总期限，失败不回退强杀或重复启动。正常停止最多等待 60 秒。已有 HTTP 扩展不会被覆盖，多 worker 暂不支持。此路线不执行 PowerShell 启动器、不创建控制台或广播信号，也不改变执行策略或证书信任。
+- **控制令牌记录**：独立令牌仅授权本插件的服务控制，不是已有 API Key。归属记录必须防止其它账户写入；恢复管理前还必须确认控制文件不向其它账户开放读取。Windows 新文件在 `CreateNew` 时就带私有 DACL，仅当前用户、SYSTEM 与内置管理员可访问，数据只经 stdin 传给写入器，不进入命令行；不采用先写令牌再收紧权限的流程。只创建新文件，不修改目录或旧配置 ACL。POSIX 使用独占创建的 `0600` 文件。原子替换保留新文件的保护；权限无法核验则拒绝启用。检查当前对象时排除确实仅向后代传播的 `InheritOnly` 规则，不忽略实际生效的外来写权限；所有者、控制文件读取限制和空 DACL 检查仍须通过。Windows 的进程查询、ACL 查询和新控制文件创建仍使用系统 Windows PowerShell 5.1 的命令/API，但不运行被拒绝的脚本或旧监督器。
+- **原生验收边界**：Python 3.12.10、Hindsight 0.10.2、FastAPI 0.142.2、Uvicorn 0.54.0 已通过独立轻量 ASGI 原生验收：真实进程内 SIGTERM、一次关闭、lifespan 清理及退出 0；还验证了 `.env` 优先级、扩展冲突、单 worker 门禁，以及 Windows 新控制文件的创建时 DACL、UTF-8 读回和拒绝覆盖旧文件。测试不创建 MemoryEngine，不连接数据库或模型；不等同于真实 Hindsight 数据库排空、生产重启或已部署验证。旧 PowerShell 监督器路线已放弃。
+- **契约与版本**：HTTP 扩展、FastAPI Header/BackgroundTasks、Python 进程内信号与 Uvicorn 生命周期已通过 Context7 和本地实现对照。`.env` 入口加载适配仅依据已装 0.10.2 源码及隔离验证，非稳定公共 API，因此不静默兼容其它 Hindsight 版本。Windows 原子文件创建重载未被 Context7 覆盖，采用[微软 .NET Framework 官方文档](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.-ctor?view=netframework-4.8.1)、本机 WinPS 5.1 类型签名和原生验证补充；不能直接替换成缺少该重载的 PowerShell 7。`InheritOnly` 语义同样以[微软枚举文档](https://learn.microsoft.com/en-us/dotnet/api/system.security.accesscontrol.propagationflags?view=netframework-4.8.1)和 WinPS 内存描述符矩阵补证，Context7 尚未覆盖此项；矩阵不创建文件或修改真实 ACL。Node 24 的[一次性 HTTP Agent 契约](https://nodejs.org/docs/latest-v24.x/api/http.html)已通过 Context7 核对，并在 Node 24.13 下开启全局代理、拦截连接验证直连目标，没有实际网络连接。
+- **有界等待与迟到就绪**：系统查询超时直接结束等待，不依赖杀掉查询子进程后一定出现 `close`。浏览器状态请求最长等待 30 秒，启动/重启请求最长等待 300 秒（包含预检与状态汇总）；失败主动刷新，慢轮询不会被每 15 秒的新请求挤掉。超时不等于服务已退出，插件保留身份记录以防重复启动；后续状态确认健康时使用原启动快照，而不是冒称已应用新保存的配置。协作实例即使健康检查通过，启动确认、迟到就绪和恢复管理也必须重新通过控制身份握手；失败显示独立的控制错误并禁用重启，不会仅凭 `/health` 回写为就绪。API 健康但控制不可用时启动返回 503，而不是误报健康超时。预览与启动共用 Python 入口解析，指纹比较不混用 CLI 与解释器路径。
 - **自动启动**：开启后页面可请求 host 拉起未运行、且可管理的本机 API（45 秒冷却）；第三方实例不会被接管。
 - **凭据解析链**：设置页 Provider 覆盖（Key 或环境变量名）→ 环境变量 `<PROVIDER>_API_KEY` / `<PROVIDER>_TOKEN` → `ctx.credentials.resolve` 宿主凭据服务；不直接扫描凭据 YAML。状态仅显示来源或失败原因，不返回密钥。
 - **Provider 覆盖**：hindsight-api 内置类型（`openai`、`anthropic`、`gemini`、`groq`、`minimax` 等）可直接用；其它 Provider（如 DSH 环境里的 `commandcode`）按 openai 兼容端点处理，需填写 Base URL。
@@ -174,7 +178,7 @@ The **向量模型** card in the 模型 category configures Hindsight's own vect
 
 记忆类设置（`disabled`、`bankId`、`surveyModel` 等）保存不代表运行已应用。官方 0.8.1 DSH 适配器缓存工作区 RuntimeCore；同一工作区新会话也不保证重新读取。已有工作区可能需重启 DSH 重新初始化，关闭后须核验是否停止召回/写回/工具注册。本页不私改官方缓存，也不承诺下一轮生效；API restart 不能重置 DSH 记忆适配器。基础表单编辑全局字段，DSH 专属覆盖须在记忆与隐私卡片查看。
 
-服务端设置（`serverModels`、`serverEmbeddings`、`auditLogEnabled`、`providerOverrides`、`serverEnv`、`serverCommand`）塑造的是**服务进程的环境**，在下次启动/重启时应用——页面会显示「pendingRestart」提示并提供重启按钮。向量预览同理由此产生：它显示的是已保存设置在下次启动时会解析成什么，不是草稿，也不是当前进程的真实配置。
+服务端设置（`serverModels`、`serverEmbeddings`、`auditLogEnabled`、`providerOverrides`、`serverEnv`、`serverCommand`、`serverPython`）塑造的是**服务进程的环境**，在下次启动/重启时应用——页面会显示「pendingRestart」提示并提供重启按钮。向量预览同理由此产生：它显示的是已保存设置在下次启动时会解析成什么，不是草稿，也不是当前进程的真实配置。
 
 Saved memory-side configuration is not evidence of live application. The official 0.8.1 DSH adapter caches RuntimeCore by workspace; an existing workspace may require DSH reinitialization, and neither another session nor an API restart guarantees it. Server-side settings shape the server process environment and apply on the next start/restart; the page tracks that with a pending-restart banner and offers the button. The embedding preview comes from the same mechanism: it shows what the saved settings resolve to for the next launch — not the draft, and not the live process configuration.
 
