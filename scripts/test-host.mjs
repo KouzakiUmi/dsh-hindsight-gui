@@ -38,7 +38,8 @@ export async function fixture(options = {}) {
   const f = {
     process: { env: { HINDSIGHT_CONFIG: configPath, HINDSIGHT_GUI_CONFIG: guiPath, ...options.env }, platform: 'win32', pid: 123 },
     fs: {
-      existsSync: path => path === '/fixture/api.exe' || isPython(path),
+      existsSync: path => path === '/fixture/api.exe' || isPython(path)
+        || (options.entryFiles ?? []).includes(String(path).replaceAll(String.fromCharCode(92), '/')),
       openSync: () => 7, closeSync() {},
       readSync: (_fd, buffer) => { const text = Buffer.from(options.log ?? 'Error: synthetic'); text.copy(buffer); return text.length },
     },
@@ -73,14 +74,14 @@ export async function fixture(options = {}) {
         return {version:1,pid:identity.pid,nonce:control.nonce,stopping:action==='stop'}
       },
     },
-    spawn(command, args) {
+    spawn(command, args, spawnOptions) {
       if (command === '/fixture/api.exe' || isPython(command)) {
         const child = new EventEmitter()
         child.pid = failSpawn ? undefined : ++nextPid
         child.exitCode = null
-        child.unref = () => {}
+        child.unref = () => { child.unreferenced = true }
         child.kill = () => { throw new Error('Windows direct kill must not be used') }
-        launches.push({ command, args, child })
+        launches.push({ command, args, child, options: spawnOptions })
         if (failSpawn) queueMicrotask(() => child.emit('error', new Error('synthetic spawn failure '+SECRET)))
         else {
           identities.set(child.pid, { pid: child.pid, executable: '/fixture/api.exe', started: 'identity-'+child.pid })
@@ -172,7 +173,7 @@ export async function fixture(options = {}) {
   ]
   for (const [before, after] of substitutions) { assert.ok(source.includes(before), 'mock boundary changed'); source = source.replace(before, after) }
   source = 'const process = globalThis.__hostFixture.process;\n'+source+
-    '\nexport { redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, execCapture, ownsProcess, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
+    '\nexport { resolveServerEntry, redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, execCapture, ownsProcess, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
   const m = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
   const state = m.createServerState()
   const ctx = {
@@ -210,6 +211,49 @@ const gui = { serverCommand: '/fixture/api.exe' }
 const config = { apiUrl: 'http://127.0.0.1:8888' }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+await test('Windows service startup hides Python without allocating a detached console', async () => {
+  const f = await fixture()
+  await f.m.startServer(gui, config, f.state, f.ctx)
+  const launch = f.launches[0]
+  assert.equal(launch.options.detached, false)
+  assert.equal(launch.options.windowsHide, true)
+  assert.deepEqual(launch.options.stdio, ['ignore', 7, 7])
+  assert.equal(launch.child.unreferenced, true)
+  assert.ok(launch.command.endsWith('python.exe'))
+})
+await test('uv exported launcher does not hide its installed API Python environment', async () => {
+  const api = '/fixture/uv/tools/hindsight-api/Scripts/hindsight-api.exe'
+  const python = '/fixture/uv/tools/hindsight-api/Scripts/python.exe'
+  const f = await fixture({ env: { PATH: '/fixture/bin', APPDATA: '/fixture' },
+    entryFiles: ['/fixture/bin/hindsight-api.exe', api, python] })
+  const resolved = f.m.resolveServerEntry({})
+  assert.equal(resolved.entry.command.replaceAll(String.fromCharCode(92), '/'), api)
+  assert.equal(resolved.entry.source, 'default install location')
+  const launch = resolveServiceEntry({}, resolved.entry, 'win32')
+  assert.equal(launch.command.replaceAll(String.fromCharCode(92), '/'), python)
+  assert.equal(f.launches.length, 0)
+})
+await test('custom uv tool directory is checked without invoking uv or generic Python', async () => {
+  const api = '/custom/tools/hindsight-api/Scripts/hindsight-api.exe'
+  const f = await fixture({ env: { UV_TOOL_DIR: '/custom/tools' },
+    entryFiles: [api, '/custom/tools/hindsight-api/Scripts/python.exe'] })
+  assert.equal(f.m.resolveServerEntry({}).entry.command.replaceAll(String.fromCharCode(92), '/'), api)
+  assert.equal(f.commands.length, 0)
+})
+await test('launcher-only discovery reports missing Python and preserves explicit overrides', async () => {
+  const f = await fixture({ env: { PATH: '/fixture/bin', APPDATA: '/fixture' },
+    entryFiles: ['/fixture/bin/hindsight-api.exe'] })
+  assert.equal(f.m.resolveServerEntry({}).entry, null)
+  assert.match(f.m.resolveServerEntry({}).reason, /Python/)
+  assert.equal(f.m.resolveServerEntry({ serverCommand: '/fixture/bin/hindsight-api.exe' }).entry.source, 'config')
+  assert.equal(f.m.resolveServerEntry({ serverPython: '/missing/python.exe' }).entry, null)
+})
+await test('a complete PATH API environment retains priority over uv fallback', async () => {
+  const f = await fixture({ env: { PATH: '/fixture/bin', UV_TOOL_DIR: '/custom/tools' },
+    entryFiles: ['/fixture/bin/hindsight-api.exe', '/fixture/bin/python.exe',
+      '/custom/tools/hindsight-api/Scripts/hindsight-api.exe', '/custom/tools/hindsight-api/Scripts/python.exe'] })
+  assert.equal(f.m.resolveServerEntry({}).entry.source, 'PATH')
+})
 await test('URL validation, remote management fence and base-path preservation', async () => {
   const {m} = await fixture()
   assert.throws(() => m.sanitizePatch({ apiUrl:'file:///bad' }), /apiUrl/)
