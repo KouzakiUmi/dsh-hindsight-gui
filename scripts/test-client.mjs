@@ -1534,6 +1534,53 @@ test('活跃向量已保存仍保留其它Provider未提交草稿', async () => 
   assert.equal(inputs(root,'text').find(n=>n.props.placeholder==='TEI 服务地址').props.value,'http://localhost:8090')
 })
 
+function makeFakeWindow(store) {
+  const listeners = new Map()
+  return {
+    localStorage: {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => { store.set(key, String(value)) },
+      removeItem: (key) => { store.delete(key) },
+    },
+    addEventListener: (type, fn) => { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn) },
+    removeEventListener: (type, fn) => { listeners.get(type)?.delete(fn) },
+    dispatchEvent: (event) => { for (const fn of listeners.get(event.type) ?? []) fn(event); return true },
+  }
+}
+class FakeEvent { constructor(type) { this.type = type } }
+
+function bankInput(root) {
+  return inputs(root, 'text').find((n) => n.props['aria-label'] === '记忆库 ID')
+}
+
+test('记忆库 ID 记住上次输入，并在各分类间共享', async () => {
+  const store = new Map()
+  const clock = { window: makeFakeWindow(store), Event: FakeEvent }
+  const managed = baseStatus({ management: { protocolVersion: 1 } })
+  const first = await mountPage(createFetchMock(), { status: managed, models: MODELS_OK, tab: '概览', clock })
+  assert.ok(bankInput(first.root), '概览分类应有记忆库输入框')
+  assert.equal(bankInput(first.root).props.value, '', '首次为空')
+  change(bankInput(first.root), 'coding-agent::PI-DESKTOP')
+  first.harness.flush()
+  assert.equal(store.get('dsh-hindsight-gui.bankId'), 'coding-agent::PI-DESKTOP', '输入即落盘')
+  switchTab(first.harness, first.root, '安全')
+  assert.equal(bankInput(first.root).props.value, 'coding-agent::PI-DESKTOP', '同窗口其它分类同步')
+  const second = await mountPage(createFetchMock(), { status: managed, models: MODELS_OK, tab: '概览', clock })
+  assert.equal(bankInput(second.root).props.value, 'coding-agent::PI-DESKTOP', '面板刷新后回填')
+  change(bankInput(second.root), '')
+  second.harness.flush()
+  assert.equal(store.has('dsh-hindsight-gui.bankId'), false, '清空后移除存储键')
+})
+
+test('没有 window 时记忆库输入仍可用', async () => {
+  const { harness, root } = await mountPage(createFetchMock(), { status: baseStatus({ management: { protocolVersion: 1 } }), models: MODELS_OK, tab: '概览' })
+  assert.ok(bankInput(root), '无 window 也要渲染输入框')
+  change(bankInput(root), 'coding-agent::PI-DESKTOP')
+  harness.flush()
+  assert.equal(bankInput(root).props.value, 'coding-agent::PI-DESKTOP', '无存储也可输入')
+})
+
+
 let failed = 0
 for (const [name, fn] of tests) {
   try {
