@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Keep the selected bank id in `localStorage`, so a panel reload no longer clears the hand-typed memory bank (the host supplies no bank list today). Overview, security, models, and advanced share one key and stay in sync through a `storage` listener plus a same-window event; when storage is unavailable the panel falls back to in-memory state instead of failing. Thanks to @leaderlemon in PR #2.
 - Share effective Python entry resolution between launch fingerprints and status previews so automatic discovery does not leave an unchanged service permanently pending restart.
 - Require the control identity handshake for startup, late readiness, manager recovery and restart eligibility; distinguish a healthy API with unavailable control from a health timeout, retaining ownership evidence without confirming readiness.
 - Ignore genuinely inherit-only ACL rules when assessing the current object, while still rejecting effective foreign writes, readable secret files and null DACLs.

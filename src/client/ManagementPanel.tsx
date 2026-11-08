@@ -290,6 +290,57 @@ function Field({ label, hint, children }) {
 
 let pickerSeq = 0
 
+const BANK_ID_STORAGE_KEY = 'dsh-hindsight-gui.bankId'
+const BANK_ID_SYNC_EVENT = 'dsh-hindsight-gui:bank-id'
+
+function readStoredBankId() {
+  try {
+    return window.localStorage.getItem(BANK_ID_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Bank id shared by every section and remembered across reloads.
+ *
+ * The host supplies no bank list (`banks` is always empty today), so the id has to be
+ * typed by hand — and without persistence every panel reload forced the user to retype
+ * it. `storage` keeps separate windows in sync, the custom event does the same for the
+ * sections mounted in this one.
+ */
+function usePersistedBankId(): [string, (next: string) => void] {
+  const [bankId, setBankId] = useState(readStoredBankId)
+  useEffect(() => {
+    const sync = () => setBankId(readStoredBankId())
+    try {
+      window.addEventListener('storage', sync)
+      window.addEventListener(BANK_ID_SYNC_EVENT, sync)
+      return () => {
+        window.removeEventListener('storage', sync)
+        window.removeEventListener(BANK_ID_SYNC_EVENT, sync)
+      }
+    } catch {
+      return undefined
+    }
+  }, [])
+  const persist = useCallback((next: string) => {
+    setBankId(next)
+    try {
+      if (next) window.localStorage.setItem(BANK_ID_STORAGE_KEY, next)
+      else window.localStorage.removeItem(BANK_ID_STORAGE_KEY)
+    } catch {
+      /* storage can be unavailable (private mode / blocked origin) — the panel still works */
+    }
+    try {
+      window.dispatchEvent(new Event(BANK_ID_SYNC_EVENT))
+    } catch {
+      /* no window (SSR / test harness): nothing to sync */
+    }
+  }, [])
+  return [bankId, persist]
+}
+
 /** Bank picker: datalist suggestions from the host-provided list, free text allowed. */
 function BankPicker({ banks, value, onChange, label }) {
   const [listId] = useState(() => P + 'banks-' + (++pickerSeq))
@@ -466,7 +517,7 @@ const STAT_LABELS = {
 }
 
 function OverviewSection({ active, apiUrl, banks, request, cap, diag, reloadDiag, openConfirm }) {
-  const [bankId, setBankId] = useState('')
+  const [bankId, setBankId] = usePersistedBankId()
   const call = useChannel(request, apiUrl + '|' + bankId)
   const [stats, setStats] = useState({ loading: false, error: null, data: null })
   const [statusFilter, setStatusFilter] = useState('')
@@ -1066,7 +1117,7 @@ function bankFieldInfo(read, key) {
 }
 
 function SecuritySection({ active, apiUrl, banks, request, cap, openConfirm }) {
-  const [bankId, setBankId] = useState('')
+  const [bankId, setBankId] = usePersistedBankId()
   const call = useChannel(request, apiUrl + '|' + bankId)
   const [read, setRead] = useState(null)
   const [baseline, setBaseline] = useState(null)
@@ -1281,7 +1332,7 @@ const DRYRUN_FIELDS = {
 }
 
 function ModelsSection({ active, apiUrl, banks, request, cap, features, openConfirm }) {
-  const [bankId, setBankId] = useState('')
+  const [bankId, setBankId] = usePersistedBankId()
   // prompt preview
   const [pvOperation, setPvOperation] = useState('retain')
   const [pvStrategy, setPvStrategy] = useState('')
@@ -1584,7 +1635,7 @@ function submittedOperationId(res) {
 }
 
 function AdvancedSection({ active, apiUrl, banks, request, cap, openConfirm }) {
-  const [bankId, setBankId] = useState('')
+  const [bankId, setBankId] = usePersistedBankId()
   const call = useChannel(request, apiUrl + '|' + bankId)
   // aliases
   const [aliases, setAliases] = useState({ loading: false, error: null, list: null })
