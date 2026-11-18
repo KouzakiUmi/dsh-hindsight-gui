@@ -31,6 +31,10 @@
     "type": "git",
     "url": "https://github.com/KouzakiUmi/dsh-hindsight-gui.git"
   },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.3 <0.2.3-0"
+  },
   "devDependencies": {
     "esbuild": "^0.25.12"
   },
@@ -41,7 +45,9 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ],
       "platform": "web"
     }

@@ -271,6 +271,9 @@ This plugin **does not deploy a Hindsight server** — see "You need to deploy H
 
 ## 开发 / Development
 
+- **宿主要求 / Host requirements**：Node.js ≥ 24.9.0；DSH Core 从 `0.2.2-rc.3` 起，范围限于 `0.2.2`。版本检查使用 [package.json](../package.json) 中的 `engines.dsh`；静态兼容性核对基准为 DSH Core `0.2.2-rc.3`。
+- **运行依赖 / Runtime dependencies**：Web 客户端由 DSH 提供 React、Slot Renderer、Layout 和 Sidebar；Host 通过 `webServer` 挂载路由，模型目录和凭据服务是可选能力。`esbuild` 只用于开发和构建。Hindsight API 是独立服务；`@vectorize-io/hindsight-coding-agents` 提供记忆工具，不随 GUI 安装。
+
 ```bash
 pnpm install
 pnpm build:client              # esbuild → lib/client.cjs → lib/client.js
