@@ -1581,6 +1581,52 @@ test('没有 window 时记忆库输入仍可用', async () => {
 })
 
 
+// 英文模式必须覆盖所有渲染文本与无障碍属性；语言选项即时生效并落盘。
+test('英文模式下五个分类不残留中文，语言选项落盘并即时切回中文', async () => {
+  const HAN = /[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]/
+  const store = new Map([['dsh-hindsight-gui.locale', 'en']])
+  const clock = { window: makeFakeWindow(store), Event: FakeEvent }
+  const managed = baseStatus({ management: { protocolVersion: 1 } })
+  const { harness, root } = await mountPage(createFetchMock(), { status: managed, models: MODELS_OK, tab: 'Overview', clock })
+
+  // Host-supplied diagnostics are rendered verbatim (the plugin's lib/ layer is
+  // still Chinese-only), so the fixture note is whitelisted here. Everything
+  // else on screen must come from the translated client.
+  const hostText = ['旧配置继承预览']
+  const assertEnglish = (where) => {
+    // The language selector deliberately lists each language in its own script,
+    // so "中文" there is a language name rather than untranslated UI text.
+    let text = pageText(root).replaceAll('中文', '')
+    for (const allowed of hostText) text = text.replaceAll(allowed, '')
+    const leaked = text.match(HAN)
+    assert.ok(!leaked, `${where}: 仍显示中文 ${leaked ? JSON.stringify(text.slice(Math.max(0, leaked.index - 20), leaked.index + 24)) : ''}`)
+    for (const node of hostNodes(root, true)) {
+      for (const key of ['aria-label', 'placeholder', 'title', 'alt']) {
+        const value = node.props[key]
+        if (typeof value === 'string') assert.ok(!HAN.test(value), `${where}: 属性 ${key} 仍为中文：${value}`)
+      }
+    }
+  }
+
+  assertEnglish('overview')
+  for (const tab of ['Memory & connection', 'Models', 'Security', 'Advanced', 'Overview']) {
+    switchTab(harness, root, tab)
+    assertEnglish(tab)
+  }
+
+  const language = hostNodes(root, true).find((n) => n.tag === 'select' && n.props['aria-label'] === 'Interface language')
+  assert.ok(language, '语言选项存在')
+  assert.equal(language.props.value, 'en')
+  change(language, 'zh')
+  harness.flush()
+  assert.equal(store.get('dsh-hindsight-gui.locale'), 'zh', '语言选择落盘')
+  switchTab(harness, root, '概览')
+  assert.ok(pageText(root).includes('未保存的更改') || pageText(root).includes('当前表单与已保存设置一致'), '切回中文即时生效')
+  const languageZh = hostNodes(root, true).find((n) => n.tag === 'select' && n.props['aria-label'] === '界面语言')
+  assert.equal(languageZh.props.value, 'zh', '选择器反映当前语言')
+})
+
+
 let failed = 0
 for (const [name, fn] of tests) {
   try {
