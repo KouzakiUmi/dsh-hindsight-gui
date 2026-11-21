@@ -14,6 +14,8 @@ A settings dashboard for Hindsight in DeepSeek Harness—not a memory engine.
 [![CI](https://github.com/KouzakiUmi/dsh-hindsight-gui/actions/workflows/publish.yml/badge.svg)](https://github.com/KouzakiUmi/dsh-hindsight-gui/actions/workflows/publish.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-68786a)](LICENSE)
 
+[English](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/README.en.md) · 中文（本页）
+
 [快速开始](#快速开始) · [界面预览](#五个分类一处管理) · [能力边界](#能力与安全边界) · [技术参考](https://github.com/KouzakiUmi/dsh-hindsight-gui/blob/main/docs/technical-reference.md)
 
 </div>

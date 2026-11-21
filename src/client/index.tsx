@@ -26,6 +26,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { t, tf, LOCALES, setLocale, useLocale } from './i18n'
 import ManagementPanel from './ManagementPanel'
 import { MANAGEMENT_URL, UPLOAD_URL, READ_OPERATIONS, DOWNLOAD_LIMIT } from '../../lib/management-contracts.js'
 
@@ -91,10 +92,10 @@ function hasSimpleRedactRule(rules) {
 }
 
 function defenseEnabled(payload) {
-  if (!('memoryDefense' in payload)) throw new Error('防护策略响应缺少 memoryDefense，状态未知。')
+  if (!('memoryDefense' in payload)) throw new Error(t('防护策略响应缺少 memoryDefense，状态未知。'))
   const policy = payload.memoryDefense
   if (policy !== null && (typeof policy !== 'object' || Array.isArray(policy) || !Array.isArray(policy.rules ?? []))) {
-    throw new Error('防护策略响应格式无效，状态未知。')
+    throw new Error(t('防护策略响应格式无效，状态未知。'))
   }
   return policy?.enabled === true && hasSimpleRedactRule(policy.rules)
 }
@@ -207,6 +208,7 @@ const CSS = [
   '.' + PREFIX + 'bankmeta{display:flex;flex:1 1 160px;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere;}',
   '.' + PREFIX + 'banktitle{font-weight:600;}',
   '.' + PREFIX + 'bankerror{flex:1 1 100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}',
+  '.' + PREFIX + 'lang{width:auto;flex:0 0 auto;height:30px;font-size:12px;padding:0 8px;}',
   '.' + PREFIX + 'savebar{margin-top:auto;box-shadow:0 -4px 16px rgba(0,0,0,.04);}',
   '.' + PREFIX + 'savestate{flex:1 1 180px;font-size:12px;min-width:0;}',
   '@container hindsight-settings (max-width:620px){.' + PREFIX + 'field{grid-template-columns:minmax(0,1fr);gap:4px;}.' + PREFIX + 'pair{grid-template-columns:minmax(0,1fr);}.' + PREFIX + 'card{padding:15px;}.' + PREFIX + 'row{grid-template-columns:76px minmax(0,1fr);}.' + PREFIX + 'tab{padding:8px 10px;}.' + PREFIX + 'count{margin-left:0;}}',
@@ -320,7 +322,7 @@ function ModelSelectField(props) {
               }
             }}
           >
-            <option value="">{defaultValue ? `默认 (${defaultValue})` : '未指定（跟随系统默认）'}</option>
+            <option value="">{defaultValue ? tf("默认 ({0})", [defaultValue]) : t('未指定（跟随系统默认）')}</option>
             {providers.map((p) => (
               <optgroup key={p.id} label={p.name || p.id}>
                 {(p.models || []).map((m) => {
@@ -333,7 +335,7 @@ function ModelSelectField(props) {
                 })}
               </optgroup>
             ))}
-            <option value="__custom__">自定义输入...</option>
+            <option value="__custom__">{t("自定义输入...")}</option>
           </select>
           {isCustom && (
             <button
@@ -344,9 +346,9 @@ function ModelSelectField(props) {
                 setCustomMode(false)
                 onChange('')
               }}
-              title="切换回选择列表"
+              title={t("切换回选择列表")}
             >
-              列表
+              {t("列表")}
             </button>
           )}
         </div>
@@ -354,9 +356,9 @@ function ModelSelectField(props) {
           <input
             className={PREFIX + 'input'}
             type="text"
-            aria-label={`${label} 自定义模型`}
+            aria-label={tf("{0} 自定义模型", [label])}
             value={value}
-            placeholder="例如 deepseek-flash 或 provider/model"
+            placeholder={t("例如 deepseek-flash 或 provider/model")}
             onChange={(e) => onChange(e.target.value)}
           />
         )}
@@ -367,7 +369,7 @@ function ModelSelectField(props) {
 }
 
 /** Bound both fetch and body parsing; abort/unmount must settle even if transport stalls. */
-function requestJson(url, init, timeoutMs, requests, timeoutMessage = '请求超时或已取消，请刷新后确认最新状态。', responseMode = 'json') {
+function requestJson(url, init, timeoutMs, requests, timeoutMessage = t('请求超时或已取消，请刷新后确认最新状态。'), responseMode = 'json') {
   const controller = new AbortController()
   requests.add(controller)
   const externalSignal = init?.signal
@@ -382,9 +384,9 @@ function requestJson(url, init, timeoutMs, requests, timeoutMessage = '请求超
   const response = fetch(url, { ...init, signal: controller.signal }).then(async (res) => {
     if (responseMode === 'blob' && res.ok) {
       const declared = Number(res.headers?.get?.('content-length'))
-      if (Number.isFinite(declared) && declared > DOWNLOAD_LIMIT) throw new Error('导出超过500MiB下载上限')
+      if (Number.isFinite(declared) && declared > DOWNLOAD_LIMIT) throw new Error(t('导出超过500MiB下载上限'))
       const blob = await res.blob()
-      if (blob.size > DOWNLOAD_LIMIT) throw new Error('导出超过500MiB下载上限')
+      if (blob.size > DOWNLOAD_LIMIT) throw new Error(t('导出超过500MiB下载上限'))
       return blob
     }
     const payload = await res.json().catch(() => null)
@@ -393,7 +395,7 @@ function requestJson(url, init, timeoutMs, requests, timeoutMessage = '请求超
       failure.status = res.status
       throw failure
     }
-    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('响应格式无效')
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(t('响应格式无效'))
     return payload
   })
   return Promise.race([response, cancelled]).finally(() => {
@@ -408,6 +410,7 @@ function requestJson(url, init, timeoutMs, requests, timeoutMessage = '请求超
  * @returns the page element.
  */
 function PanelPage() {
+  const locale = useLocale()
   const [status, setStatus] = useState({ loading: true, data: null, error: null })
   const [draft, setDraft] = useState(null)
   // The Control Plane address lives in this plugin's own file, not in the
@@ -480,18 +483,18 @@ function PanelPage() {
       method: readOnly ? 'GET' : 'POST', signal: options.signal,
       headers: { accept: 'application/json', ...(readOnly ? {} : { 'content-type': 'application/json' }) },
       ...(readOnly ? {} : { body: JSON.stringify(input) }),
-    }, options.timeoutMs ?? 30000, requestsRef.current, '管理请求等待结束，结果可能未知；请重读，不自动重复操作。')
+    }, options.timeoutMs ?? 30000, requestsRef.current, t('管理请求等待结束，结果可能未知；请重读，不自动重复操作。'))
   }, [])
   const managementUpload = useCallback((input, file, options = {}) => requestJson(UPLOAD_URL, {
     method: 'POST', signal: options.signal,
     headers: { accept: 'application/json', 'content-type': 'application/zip', 'x-hindsight-transfer': encodeURIComponent(JSON.stringify(input)) },
     body: file,
-  }, options.timeoutMs ?? 120000, requestsRef.current, '导入等待结束，提交结果可能未知；请查询任务，不重复导入。'), [])
+  }, options.timeoutMs ?? 120000, requestsRef.current, t('导入等待结束，提交结果可能未知；请查询任务，不重复导入。')), [])
   const managementDownload = useCallback(async (input, options = {}) => {
     const blob = await requestJson(MANAGEMENT_URL, { method: 'POST', signal: options.signal,
       headers: { accept: 'application/zip', 'content-type': 'application/json' }, body: JSON.stringify(input),
-    }, options.timeoutMs ?? 180000, requestsRef.current, '下载等待结束或已取消。', 'blob')
-    if (options.signal?.aborted) throw new Error('下载已取消')
+    }, options.timeoutMs ?? 180000, requestsRef.current, t('下载等待结束或已取消。'), 'blob')
+    if (options.signal?.aborted) throw new Error(t('下载已取消'))
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     try { anchor.href = url; anchor.download = 'hindsight-bank.zip'; document.body.appendChild(anchor); anchor.click() }
@@ -514,7 +517,7 @@ function PanelPage() {
     requestJson(STATUS_URL, { headers: { accept: 'application/json' } }, 30000, requestsRef.current)
       .then((data) => {
         if (!mountedRef.current || generation !== statusGenRef.current) return
-        if (!data?.config?.values || !data?.gui || !data?.api) throw new Error('状态响应格式无效，请重试。')
+        if (!data?.config?.values || !data?.gui || !data?.api) throw new Error(t('状态响应格式无效，请重试。'))
         setStatus({ loading: false, data, error: null })
       })
       .catch((error) => {
@@ -530,7 +533,7 @@ function PanelPage() {
     requestJson(MODELS_URL, { headers: { accept: 'application/json' } }, 30000, requestsRef.current)
       .then((data) => {
         if (!mountedRef.current || generation !== modelsGenRef.current) return
-        if (!Array.isArray(data?.providers)) throw new Error('模型响应缺少 Provider 列表，无法确认发现结果。')
+        if (!Array.isArray(data?.providers)) throw new Error(t('模型响应缺少 Provider 列表，无法确认发现结果。'))
         setModelsState({
           loading: false,
           providers: data.providers,
@@ -778,23 +781,23 @@ function PanelPage() {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: '{}',
-    }, 300000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
+    }, 300000, requestsRef.current, t('请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。'))
       .then((payload) => {
         if (!mountedRef.current) return
         autoStartFailuresRef.current = 0
         statusGenRef.current += 1
-        if (!payload?.status?.config?.values || !payload?.status?.gui || !payload?.status?.api) throw new Error('服务响应格式无效：启动结果尚未确认，请刷新状态。')
+        if (!payload?.status?.config?.values || !payload?.status?.gui || !payload?.status?.api) throw new Error(t('服务响应格式无效：启动结果尚未确认，请刷新状态。'))
         setStatus({ loading: false, data: payload.status, error: null })
         setServerError(null)
-        setServerMessage(payload.alreadyRunning === true ? '服务已在运行。' : '已自动启动 Hindsight 服务。')
+        setServerMessage(payload.alreadyRunning === true ? t('服务已在运行。') : t('已自动启动 Hindsight 服务。'))
       })
       .catch((error) => {
         if (!mountedRef.current) return
         autoStartFailuresRef.current += 1
         const stopped = autoStartFailuresRef.current >= AUTO_START_MAX_FAILURES
         setServerError(
-          '自动启动失败：' + String(error?.message ?? error)
-          + (stopped ? ' 已停止自动重试，请处理问题后手动启动。' : ' 稍后将自动重试。'),
+          t('自动启动失败：') + String(error?.message ?? error)
+          + (stopped ? t(' 已停止自动重试，请处理问题后手动启动。') : t(' 稍后将自动重试。')),
         )
         load()
       })
@@ -907,7 +910,7 @@ function PanelPage() {
         && (embeddingsDraft.apiKey !== '' || (embeddingsDraft.clearApiKey && embBase.secretConfigured)))
     if (inactiveEmbeddingsDirty && !embChanged) {
       setSaving(false)
-      setSaveError('其它向量 Provider 有未提交的草稿，请切回对应 Provider 保存，或放弃更改。')
+      setSaveError(t('其它向量 Provider 有未提交的草稿，请切回对应 Provider 保存，或放弃更改。'))
       return Promise.resolve(false)
     }
     if (embChanged) {
@@ -915,7 +918,7 @@ function PanelPage() {
       if (embFields.includes('dimensions') && dimensions !== null && dimensions !== ''
         && (!Number.isSafeInteger(Number(dimensions)) || Number(dimensions) <= 0)) {
         setSaving(false)
-        setSaveError('向量维度必须是正整数或留空。')
+        setSaveError(t('向量维度必须是正整数或留空。'))
         return Promise.resolve(false)
       }
       const settings = { provider: embeddingsDraft.provider }
@@ -936,10 +939,10 @@ function PanelPage() {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(payloadBody),
-    }, 30000, requestsRef.current, '保存请求超时或已取消：结果尚未确认，更改已保留。请刷新核对，勿直接重复提交。')
+    }, 30000, requestsRef.current, t('保存请求超时或已取消：结果尚未确认，更改已保留。请刷新核对，勿直接重复提交。'))
       .then((payload) => {
         if (!mountedRef.current) return false
-        if (!payload?.config?.values || !payload?.gui || !payload?.api) throw new Error('配置响应格式无效：保存结果尚未确认，请刷新核对。')
+        if (!payload?.config?.values || !payload?.gui || !payload?.api) throw new Error(t('配置响应格式无效：保存结果尚未确认，请刷新核对。'))
         setSaving(false)
         // An in-flight status poll started before the save must not overwrite
         // the save result when it arrives late.
@@ -994,11 +997,11 @@ function PanelPage() {
           setEmbeddingsDraft((prev) => prev === submitted.embeddingsDraft ? savedEmbedding : prev)
           result = 'edited'
         }
-        const saved = Array.isArray(payload?.saved) ? payload.saved.join('、') : ''
+        const saved = Array.isArray(payload?.saved) ? payload.saved.join(t('、')) : ''
         const serverSide = payload?.server?.pendingRestart === true
         setNotice(saved === ''
-          ? '已保存。'
-          : `已保存（${saved}）。${serverSide ? '服务设置需重启受控API；这不会重置DSH记忆适配器。' : '运行是否应用未确认；已有工作区可能需要重启DSH。'}${inactiveEmbeddingsDirty ? '其它向量Provider草稿已保留，尚未提交。' : ''}`)
+          ? t('已保存。')
+          : tf("已保存（{0}）。{1}{2}", [saved, serverSide ? t('服务设置需重启受控API；这不会重置DSH记忆适配器。') : t('运行是否应用未确认；已有工作区可能需要重启DSH。'), inactiveEmbeddingsDirty ? t('其它向量Provider草稿已保留，尚未提交。') : '']))
         return result
       })
       .catch((error) => {
@@ -1008,7 +1011,7 @@ function PanelPage() {
           // Conflict: the drafts stay untouched, and so does the OLD baseline
           // (its revision no longer matches the server, so a blind retry keeps
           // failing) — reloading the baseline requires an explicit discard.
-          setSaveError('保存被拒绝：配置已在其它地方修改（409 冲突）。您的更改已全部保留。注意：本地基线仍是旧版本，直接重试会继续冲突——请先「放弃更改」载入最新基线（当前编辑将被丢弃），之后再重新编辑保存。')
+          setSaveError(t('保存被拒绝：配置已在其它地方修改（409 冲突）。您的更改已全部保留。注意：本地基线仍是旧版本，直接重试会继续冲突——请先「放弃更改」载入最新基线（当前编辑将被丢弃），之后再重新编辑保存。'))
         } else {
           setSaveError(String(error?.message ?? error))
         }
@@ -1037,18 +1040,18 @@ function PanelPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: '{}',
-      }, 300000, requestsRef.current, '请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。')
+      }, 300000, requestsRef.current, t('请求超时或已取消；服务可能仍在启动，请刷新状态确认，勿重复启动。'))
         .then((payload) => {
           if (!mountedRef.current) return
           autoStartFailuresRef.current = 0
           statusGenRef.current += 1
-          if (!payload?.status?.config?.values || !payload?.status?.gui || !payload?.status?.api) throw new Error('服务响应格式无效：启动结果尚未确认，请刷新状态。')
+          if (!payload?.status?.config?.values || !payload?.status?.gui || !payload?.status?.api) throw new Error(t('服务响应格式无效：启动结果尚未确认，请刷新状态。'))
         setStatus({ loading: false, data: payload.status, error: null })
-          setServerMessage(action === 'restart' ? '已按当前设置重启服务。' : (payload.alreadyRunning === true ? '服务已在运行。' : '服务已启动。'))
+          setServerMessage(action === 'restart' ? t('已按当前设置重启服务。') : (payload.alreadyRunning === true ? t('服务已在运行。') : t('服务已启动。')))
         })
         .catch((error) => {
           if (!mountedRef.current) return
-          setServerError((action === 'restart' ? '重启失败：' : '启动失败：') + String(error?.message ?? error))
+          setServerError((action === 'restart' ? t('重启失败：') : t('启动失败：')) + String(error?.message ?? error))
           load()
         })
         .finally(() => { if (mountedRef.current) setServerBusy(null) })
@@ -1056,12 +1059,12 @@ function PanelPage() {
     // Acting with unsaved edits would silently launch the OLD configuration:
     // persist the draft first, then run against what was actually saved.
     if (dirtyRef.current) {
-      setServerMessage('检测到未保存的更改，正在先保存…')
+      setServerMessage(t('检测到未保存的更改，正在先保存…'))
       save().then((result) => {
         if (!mountedRef.current) return
         if (result === 'clean') run()
-        else if (result === 'edited') setServerError('操作未执行：保存期间又出现了新的未保存更改，请确认保存或放弃后再执行。')
-        else setServerError('操作未执行：请先解决保存失败的问题。')
+        else if (result === 'edited') setServerError(t('操作未执行：保存期间又出现了新的未保存更改，请确认保存或放弃后再执行。'))
+        else setServerError(t('操作未执行：请先解决保存失败的问题。'))
       })
       return
     }
@@ -1080,7 +1083,7 @@ function PanelPage() {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ bankId, enabled, apiUrl: apiBaseRef.current ?? '' }),
-    }, 30000, requestsRef.current, '脱敏写入超时或已取消：结果尚未确认，请重读策略后再操作。')
+    }, 30000, requestsRef.current, t('脱敏写入超时或已取消：结果尚未确认，请重读策略后再操作。'))
       .then((payload) => {
         if (!mountedRef.current || generation !== defenseGenRef.current) return
         const confirmedEnabled = defenseEnabled(payload)
@@ -1167,21 +1170,21 @@ function PanelPage() {
       || JSON.stringify(embeddingsDraft) !== JSON.stringify(base.serverEmbeddings) || inactiveEmbeddingsDirty
   }
   const tabDescription = {
-    overview: '查看连接与服务归属；仅在满足身份核验条件时启动或重启。',
-    memory: '管理记忆开关、记忆库命名与连接地址。',
-    models: '区分 DSH 功能模型与 Hindsight 向量后端，保存后按生效时机应用。',
-    security: '审计设置在服务重启后应用；记忆库脱敏开关即时写入。',
-    advanced: '调整插件选项，查看本页不会改写的其它配置键。',
+    overview: t('查看连接与服务归属；仅在满足身份核验条件时启动或重启。'),
+    memory: t('管理记忆开关、记忆库命名与连接地址。'),
+    models: t('区分 DSH 功能模型与 Hindsight 向量后端，保存后按生效时机应用。'),
+    security: t('审计设置在服务重启后应用；记忆库脱敏开关即时写入。'),
+    advanced: t('调整插件选项，查看本页不会改写的其它配置键。'),
   }
-  const apiLabel = !api || status.error !== null || api.state === 'unknown' ? '状态未知' : api.up ? '运行中' : '未运行'
-  const restartReason = status.loading ? '正在刷新状态，请等待核验完成后再操作。'
-    : status.error !== null ? '状态读取失败：请先刷新核对，不使用旧状态授权操作。'
-    : operationInFlight ? '服务操作正在执行，请等待完成后再操作。'
-      : saving ? '配置正在保存，请等待保存完成。'
-        : ownership === 'managed' ? '启动预检未通过，请检查配置错误和凭据解析提示。'
-          : ownership === 'unmanaged' ? '端口由外部进程占用：本插件无法重启它，只能等待其退出后再启动托管实例。'
-            : ownership === 'stopped' ? '服务未运行：重启不可用，请使用「启动服务」。'
-              : '服务归属未知：为避免误伤其它进程，重启不可用。'
+  const apiLabel = !api || status.error !== null || api.state === 'unknown' ? 'unknown' : api.up ? 'up' : 'down'
+  const restartReason = status.loading ? t('正在刷新状态，请等待核验完成后再操作。')
+    : status.error !== null ? t('状态读取失败：请先刷新核对，不使用旧状态授权操作。')
+    : operationInFlight ? t('服务操作正在执行，请等待完成后再操作。')
+      : saving ? t('配置正在保存，请等待保存完成。')
+        : ownership === 'managed' ? t('启动预检未通过，请检查配置错误和凭据解析提示。')
+          : ownership === 'unmanaged' ? t('端口由外部进程占用：本插件无法重启它，只能等待其退出后再启动托管实例。')
+            : ownership === 'stopped' ? t('服务未运行：重启不可用，请使用「启动服务」。')
+              : t('服务归属未知：为避免误伤其它进程，重启不可用。')
   const selectTab = (id) => setActiveTab(id)
   const tabKeyDown = (event, index) => {
     let next = index
@@ -1196,7 +1199,7 @@ function PanelPage() {
   }
 
   return (
-    <div className={PREFIX + 'root'}>
+    <div className={PREFIX + 'root'} lang={locale === 'en' ? 'en' : 'zh-CN'}>
       <div className={PREFIX + 'head'}>
         <div className={PREFIX + 'headrow'}>
           <div className={PREFIX + 'brand'}>
@@ -1204,42 +1207,47 @@ function PanelPage() {
             <div><div className={PREFIX + 'eyebrow'}>MEMORY SETTINGS</div><h2 className={PREFIX + 'h'}>Hindsight</h2></div>
           </div>
           <div className={PREFIX + 'actions'}>
-            <Pill tone={apiLabel === '运行中' ? 'ok' : apiLabel === '状态未知' ? 'warn' : 'bad'}>API {apiLabel}</Pill>
-            <Pill tone={cp?.up === true && status.error === null ? 'ok' : 'warn'}>控制台 {!cp || status.error !== null ? '状态未知' : cp.up ? '可用' : '不可用'}</Pill>
-            {server?.pendingRestart === true && <Pill tone="warn">待下次启动应用</Pill>}
+            <Pill tone={apiLabel === 'up' ? 'ok' : apiLabel === 'unknown' ? 'warn' : 'bad'}>API {apiLabel === 'up' ? t('运行中') : apiLabel === 'unknown' ? t('状态未知') : t('未运行')}</Pill>
+            <Pill tone={cp?.up === true && status.error === null ? 'ok' : 'warn'}>{t("控制台")} {!cp || status.error !== null ? t('状态未知') : cp.up ? t('可用') : t('不可用')}</Pill>
+            {server?.pendingRestart === true && <Pill tone="warn">{t("待下次启动应用")}</Pill>}
+            <select className={PREFIX + 'select ' + PREFIX + 'lang'} value={locale}
+              aria-label={t('界面语言')} title={t('界面语言')}
+              onChange={(event) => setLocale(event.target.value)}>
+              {LOCALES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
           </div>
         </div>
-        <p className={PREFIX + 'sub'}>保存不等于运行应用：已有工作区可能需重启DSH；API服务设置仅在下次受控启动/重启应用，不会自动重启。</p>
+        <p className={PREFIX + 'sub'}>{t("保存不等于运行应用：已有工作区可能需重启DSH；API服务设置仅在下次受控启动/重启应用，不会自动重启。")}</p>
       </div>
-      <div className={PREFIX + 'tabs'} role="tablist" aria-label="Hindsight 设置分类">
+      <div className={PREFIX + 'tabs'} role="tablist" aria-label={t("Hindsight 设置分类")}>
         {TABS.map((tab, index) => <button key={tab.id} type="button" role="tab"
           id={'dsh-hsp-tab-' + tab.id} aria-controls={'dsh-hsp-panel-' + tab.id}
           aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
           ref={(element) => { tabRefs.current[tab.id] = element }}
           className={PREFIX + 'tab'} onClick={() => selectTab(tab.id)}
           onKeyDown={(event) => tabKeyDown(event, index)}>
-          {tab.label}{dirtyFor(tab.id) ? ' ·' : ''}
+          {t(tab.label)}{dirtyFor(tab.id) ? ' ·' : ''}
         </button>)}
       </div>
 
       <div className={PREFIX + 'intro'}>
-        <div><h3>{TABS.find((tab) => tab.id === activeTab)?.label}</h3><p>{tabDescription[activeTab]}</p></div>
-        <span className={PREFIX + 'badge'}>{status.loading ? '正在刷新状态' : data?.sampledAt ? `状态采样 ${new Date(data.sampledAt).toLocaleTimeString()}` : '等待状态采样'}</span>
+        <div><h3>{t(TABS.find((tab) => tab.id === activeTab)?.label)}</h3><p>{tabDescription[activeTab]}</p></div>
+        <span className={PREFIX + 'badge'}>{status.loading ? t('正在刷新状态') : data?.sampledAt ? tf("状态采样 {0}", [new Date(data.sampledAt).toLocaleTimeString()]) : t('等待状态采样')}</span>
       </div>
-      {status.loading && draft === null && <div className={PREFIX + 'muted'} role="status">读取中…</div>}
+      {status.loading && draft === null && <div className={PREFIX + 'muted'} role="status">{t("读取中…")}</div>}
 
       {status.error !== null && (
         <div className={PREFIX + 'card'}>
-          <Row label="读取失败"><span className={PREFIX + 'err'}>{status.error}</span></Row>
+          <Row label={t("读取失败")}><span className={PREFIX + 'err'}>{status.error}</span></Row>
           <div className={PREFIX + 'actions'}>
-            <button type="button" className={PREFIX + 'btn'} onClick={load}>重试</button>
+            <button type="button" className={PREFIX + 'btn'} onClick={load}>{t("重试")}</button>
           </div>
         </div>
       )}
 
       {(config?.error || data?.gui?.error) && (
         <div className={PREFIX + 'errbanner'}>
-          <span>配置读取失败：{config?.error ?? data?.gui?.error}。不会覆盖损坏或不可读的文件，请先在本机修复。</span>
+          <span>{t("配置读取失败：")}{config?.error ?? data?.gui?.error}{t("。不会覆盖损坏或不可读的文件，请先在本机修复。")}</span>
         </div>
       )}
 
@@ -1248,132 +1256,132 @@ function PanelPage() {
       {server && (
         <div className={PREFIX + 'card'}>
           <div className={PREFIX + 'cardhead'}>
-            <h3 className={PREFIX + 'cardtitle'}>服务管理</h3>
+            <h3 className={PREFIX + 'cardtitle'}>{t("服务管理")}</h3>
             <div className={PREFIX + 'actions'}>
               <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canStartNow} onClick={() => serverAction('start')}>
-                {serverBusy === 'start' || (status.error === null && server.operation === 'start') ? '启动中…' : '启动服务'}
+                {serverBusy === 'start' || (status.error === null && server.operation === 'start') ? t('启动中…') : t('启动服务')}
               </button>
               <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>
-                {serverBusy === 'restart' || (status.error === null && server.operation === 'restart') ? '重启中…' : '重启服务'}
+                {serverBusy === 'restart' || (status.error === null && server.operation === 'restart') ? t('重启中…') : t('重启服务')}
               </button>
             </div>
           </div>
 
-          {server.controlError && <div className={PREFIX + 'errbanner'}><span>协作控制不可用：{server.controlError}</span></div>}
+          {server.controlError && <div className={PREFIX + 'errbanner'}><span>{t("协作控制不可用：")}{server.controlError}</span></div>}
 
           {server.ownership !== undefined && (
-            <Row label="归属">
+            <Row label={t("归属")}>
               <Pill tone={server.ownership === 'managed' ? 'ok' : 'warn'}>
-                {server.ownership === 'managed' ? '托管（本插件启动）'
-                  : server.ownership === 'unmanaged' ? '外部进程'
-                    : server.ownership === 'stopped' ? '未运行' : '未知'}
+                {server.ownership === 'managed' ? t('托管（本插件启动）')
+                  : server.ownership === 'unmanaged' ? t('外部进程')
+                    : server.ownership === 'stopped' ? t('未运行') : t('未知')}
               </Pill>
             </Row>
           )}
 
           <Row label="API">
             <Pill tone={api?.up === true ? 'ok' : api?.state === 'unknown' ? 'warn' : 'bad'}>
-              {api?.up === true ? '运行中' : api?.state === 'unknown' ? '状态未知' : '未运行'}
+              {api?.up === true ? t('运行中') : api?.state === 'unknown' ? t('状态未知') : t('未运行')}
             </Pill>
             <span className={PREFIX + 'muted'}> {api?.url}</span>
             {api?.state === 'error' && <span className={PREFIX + 'err'}> {api.error}</span>}
           </Row>
           {api?.up === true && (
-            <Row label="数据库">
+            <Row label={t("数据库")}>
               <span className={PREFIX + 'mono'}>{api.database ?? '—'}</span>
               <span className={PREFIX + 'muted'}> · {api.status ?? '—'}</span>
             </Row>
           )}
-          <Row label="控制台">
-            <Pill tone={cp?.up === true ? 'ok' : 'bad'}>{cp?.up === true ? '运行中' : '未运行'}</Pill>
+          <Row label={t("控制台")}>
+            <Pill tone={cp?.up === true ? 'ok' : 'bad'}>{cp?.up === true ? t('运行中') : t('未运行')}</Pill>
             <span className={PREFIX + 'muted'}> {cp?.url}</span>
           </Row>
           {server.lastAction && (
-            <Row label="最近操作">
+            <Row label={t("最近操作")}>
               <span className={server.lastAction.ok === true ? PREFIX + 'good' : PREFIX + 'err'}>
-                {server.lastAction.action === 'restart' ? '重启' : '启动'} · {server.lastAction.detail ?? ''}
+                {server.lastAction.action === 'restart' ? t('重启') : t('启动')} · {server.lastAction.detail ?? ''}
               </span>
             </Row>
           )}
 
-          {server.previewError && <div className={PREFIX + 'errbanner'}><span>启动配置解析失败：{server.previewError}</span></div>}
-          {server.ownershipError && <div className={PREFIX + 'errbanner'}><span>服务身份无法核验：{server.ownershipError}</span></div>}
+          {server.previewError && <div className={PREFIX + 'errbanner'}><span>{t("启动配置解析失败：")}{server.previewError}</span></div>}
+          {server.ownershipError && <div className={PREFIX + 'errbanner'}><span>{t("服务身份无法核验：")}{server.ownershipError}</span></div>}
 
           <details className={PREFIX + 'details'} open={serviceDetailsExpanded}>
-            <summary onClick={(event) => { event.preventDefault(); setServiceDetailsExpanded((value) => !value) }}>启动与运行详情</summary>
+            <summary onClick={(event) => { event.preventDefault(); setServiceDetailsExpanded((value) => !value) }}>{t("启动与运行详情")}</summary>
             <div className={PREFIX + 'foldbody'}>
-              <Row label="启动入口">{server.entry
+              <Row label={t("启动入口")}>{server.entry
                 ? <span className={PREFIX + 'mono'}>{server.entry.command}<span className={PREFIX + 'muted'}>（{server.entry.source}）</span></span>
-                : <span className={PREFIX + 'err'}>{server.entryReason ?? '未找到'}</span>}</Row>
-              <Row label="监听 PID">{server.managedPid ?? '未确认'} · 端口 {server.port ?? '未知'}</Row>
-              {server.runningConfig && <Row label="运行中配置">
+                : <span className={PREFIX + 'err'}>{server.entryReason ?? t('未找到')}</span>}</Row>
+              <Row label={t("监听 PID")}>{server.managedPid ?? t('未确认')} {t("· 端口")} {server.port ?? t('未知')}</Row>
+              {server.runningConfig && <Row label={t("运行中配置")}>
                 <span className={PREFIX + 'mono'}>{server.runningConfig.fingerprint ?? '—'}</span>
-                <span className={PREFIX + 'muted'}>启动于 {server.runningConfig.startedAt ?? '—'}
-                  {server.runningConfig.auditLogEnabled === true ? ' · 审计日志开' : server.runningConfig.auditLogEnabled === false ? ' · 审计日志关' : ''}
+                <span className={PREFIX + 'muted'}>{t("启动于")} {server.runningConfig.startedAt ?? '—'}
+                  {server.runningConfig.auditLogEnabled === true ? t(' · 审计日志开') : server.runningConfig.auditLogEnabled === false ? t(' · 审计日志关') : ''}
                 </span>
               </Row>}
             </div>
           </details>
           {api?.up === true && server.runtimeConfigKnown === false && (
             <span className={PREFIX + 'hint'}>
-              运行中服务的实际配置无法确认（可能由外部启动）；「下次启动将应用」仅反映本页保存的值。
+              {t("运行中服务的实际配置无法确认（可能由外部启动）；「下次启动将应用」仅反映本页保存的值。")}
             </span>
           )}
           {(!canRestartNow || operationInFlight) && !legacyHost && <span className={PREFIX + 'hint'}>{restartReason}</span>}
           {Array.isArray(server.resolutions) && server.resolutions.some((res) => res.mode === 'error') && <div className={PREFIX + 'errbanner'} role="alert">
-            <span>启动预检失败：{server.resolutions.filter((res) => res.mode === 'error').map((res) => `${res.scope}: ${res.note}`).join('；')}</span>
+            <span>{t("启动预检失败：")}{server.resolutions.filter((res) => res.mode === 'error').map((res) => `${res.scope}: ${res.note}`).join('；')}</span>
           </div>}
 
           {server.pendingRestart === true && api?.up === true && <div className={PREFIX + 'banner'}>
-            <span>{server.runtimeConfigKnown === true ? '服务端设置已修改，已确认的启动配置与保存值不同。' : '服务端设置已保存；当前实例配置未知，无法确认是否已生效。'}</span>
-            <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>立即重启生效</button>
+            <span>{server.runtimeConfigKnown === true ? t('服务端设置已修改，已确认的启动配置与保存值不同。') : t('服务端设置已保存；当前实例配置未知，无法确认是否已生效。')}</span>
+            <button type="button" className={PREFIX + 'btn'} disabled={operationInFlight || !canRestartNow} onClick={() => serverAction('restart')}>{t("立即重启生效")}</button>
           </div>}
           <details className={PREFIX + 'details'} open={launchExpanded}>
-          <summary onClick={(event) => { event.preventDefault(); setLaunchExpanded((value) => !value) }}>启动选项与下次配置</summary>
+          <summary onClick={(event) => { event.preventDefault(); setLaunchExpanded((value) => !value) }}>{t("启动选项与下次配置")}</summary>
           <div className={PREFIX + 'foldbody'}>
           <div className={PREFIX + 'field'}>
-            <span className={PREFIX + 'label'}>自动启动</span>
+            <span className={PREFIX + 'label'}>{t("自动启动")}</span>
             <div className={PREFIX + 'control'}>
               <label className={PREFIX + 'check'}>
                 <input type="checkbox" checked={autoStartDraft}
                   onChange={(event) => setAutoStartDraft(event.target.checked)} />
-                <span>API 未运行时，打开本页自动拉起服务（保存后生效）</span>
+                <span>{t("API 未运行时，打开本页自动拉起服务（保存后生效）")}</span>
               </label>
               <span className={PREFIX + 'hint'}>
-                由插件按下方「功能模型调用」等设置动态构建环境并启动，无需系统启动脚本。
+                {t("由插件按下方「功能模型调用」等设置动态构建环境并启动，无需系统启动脚本。")}
               </span>
             </div>
           </div>
 
           <div className={PREFIX + 'field'}>
-            <span className={PREFIX + 'label'}>启动命令覆盖</span>
+            <span className={PREFIX + 'label'}>{t("启动命令覆盖")}</span>
             <div className={PREFIX + 'control'}>
-              <input className={PREFIX + 'input'} type="text" aria-label="服务启动命令覆盖" value={serverCommandDraft}
-                placeholder="留空 = 自动发现（PATH → uv/pip 默认安装位置）"
+              <input className={PREFIX + 'input'} type="text" aria-label={t("服务启动命令覆盖")} value={serverCommandDraft}
+                placeholder={t("留空 = 自动发现（PATH → uv/pip 默认安装位置）")}
                 onChange={(event) => setServerCommandDraft(event.target.value)} />
-              <span className={PREFIX + 'hint'}>用于定位相邻的 Python 环境；填写下方解释器后优先使用解释器，不再通过此命令启动。</span>
+              <span className={PREFIX + 'hint'}>{t("用于定位相邻的 Python 环境；填写下方解释器后优先使用解释器，不再通过此命令启动。")}</span>
             </div>
           </div>
 
           <div className={PREFIX + 'field'}>
-            <span className={PREFIX + 'label'}>Hindsight Python 环境</span>
+            <span className={PREFIX + 'label'}>{t("Hindsight Python 环境")}</span>
             <div className={PREFIX + 'control'}>
-              <input className={PREFIX + 'input'} type="text" aria-label="Hindsight Python 解释器" value={serverPythonDraft}
-                placeholder="已安装 hindsight-api 的 Python 解释器完整路径"
+              <input className={PREFIX + 'input'} type="text" aria-label={t("Hindsight Python 解释器")} value={serverPythonDraft}
+                placeholder={t("已安装 hindsight-api 的 Python 解释器完整路径")}
                 onChange={(event) => setServerPythonDraft(event.target.value)} />
-              <span className={PREFIX + 'hint'}>留空仅尝试启动入口旁的 python；无法确认时拒绝启动，不猜测其它环境。当前协作关闭适配 Hindsight 0.10.2、单 worker；已有 HTTP 扩展时不会覆盖。</span>
+              <span className={PREFIX + 'hint'}>{t("留空仅尝试启动入口旁的 python；无法确认时拒绝启动，不猜测其它环境。当前协作关闭适配 Hindsight 0.10.2、单 worker；已有 HTTP 扩展时不会覆盖。")}</span>
             </div>
           </div>
 
 
           {Array.isArray(server.resolutions) && server.resolutions.length > 0 && (
             <div className={PREFIX + 'control'}>
-              <span className={PREFIX + 'hint'}>下次启动/重启将应用：</span>
+              <span className={PREFIX + 'hint'}>{t("下次启动/重启将应用：")}</span>
               <ul className={PREFIX + 'list'}>
                 {server.resolutions.map((res) => (
                   <li className={PREFIX + 'item'} key={res.scope}>
                     <span className={PREFIX + 'muted'} style={{ flex: '0 0 64px' }}>
-                      {SERVER_SCOPES.find((s) => s.key === res.scope)?.label ?? res.scope}
+                      {t(SERVER_SCOPES.find((s) => s.key === res.scope)?.label) ?? res.scope}
                     </span>
                     {res.mode === 'error'
                       ? <span className={PREFIX + 'err'} style={{ minWidth: 0 }}>{res.spec} — {res.note}</span>
@@ -1382,7 +1390,7 @@ function PanelPage() {
                         : (
                           <span style={{ minWidth: 0 }}>
                             <span className={PREFIX + 'mono'}>{res.spec}</span>
-                            <span className={PREFIX + 'muted'}> · 凭据 {res.credentialSource}{res.baseUrl ? ` · ${res.baseUrl}` : ''}</span>
+                            <span className={PREFIX + 'muted'}> {t("· 凭据")} {res.credentialSource}{res.baseUrl ? ` · ${res.baseUrl}` : ''}</span>
                           </span>
                         )}
                   </li>
@@ -1401,7 +1409,7 @@ function PanelPage() {
                 disabled={operationInFlight || !canStartNow}
                 onClick={() => { setServerError(null); serverAction('start') }}
               >
-                重试启动
+                {t("重试启动")}
               </button>
             </div>
           )}
@@ -1410,9 +1418,9 @@ function PanelPage() {
 
           <div className={PREFIX + 'actions'}>
             <a className={PREFIX + 'btn'} href={cp ? cp.url : '#'} target="_blank" rel="noreferrer noopener">
-              打开 Control Plane
+              {t("打开 Control Plane")}
             </a>
-            <button type="button" className={PREFIX + 'btn'} onClick={load}>刷新状态</button>
+            <button type="button" className={PREFIX + 'btn'} onClick={load}>{t("刷新状态")}</button>
           </div>
         </div>
       )}
@@ -1422,37 +1430,37 @@ function PanelPage() {
       {draft !== null && (
         <>
           <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>记忆</h3>
+            <h3 className={PREFIX + 'cardtitle'}>{t("记忆")}</h3>
 
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>启用</span>
+              <span className={PREFIX + 'label'}>{t("启用")}</span>
               <div className={PREFIX + 'control'}>
                 <label className={PREFIX + 'check'}>
                   <input type="checkbox" checked={draft.disabled !== true}
                     onChange={(event) => set('disabled', !event.target.checked)} />
-                  <span>在这个 harness 上启用长期记忆</span>
+                  <span>{t("在这个 harness 上启用长期记忆")}</span>
                 </label>
                 <span className={PREFIX + 'hint'}>
-                  关闭会保存 disabled；已缓存的工作区可能仍召回、写回或保留工具，需重启DSH重新初始化后核验。仅新建同一工作区会话或重启API不保证生效。
+                  {t("关闭会保存 disabled；已缓存的工作区可能仍召回、写回或保留工具，需重启DSH重新初始化后核验。仅新建同一工作区会话或重启API不保证生效。")}
                 </span>
               </div>
             </div>
 
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>记忆库命名</span>
+              <span className={PREFIX + 'label'}>{t("记忆库命名")}</span>
               <div className={PREFIX + 'control'}>
                 <label className={PREFIX + 'check'}>
                   <input type="radio" name="bankmode" checked={recordMode === 'dynamic'}
                     onChange={() => set('dynamicBankId', true)} />
-                  <span>按工作区动态命名 <span className={PREFIX + 'muted'}>(harness::项目名，例如 coding-agent::DSH)</span></span>
+                  <span>{t("按工作区动态命名")} <span className={PREFIX + 'muted'}>{t("(harness::项目名，例如 coding-agent::DSH)")}</span></span>
                 </label>
                 <label className={PREFIX + 'check'}>
                   <input type="radio" name="bankmode" checked={recordMode === 'fixed'}
                     onChange={() => set('dynamicBankId', false)} />
-                  <span>固定名字</span>
+                  <span>{t("固定名字")}</span>
                 </label>
                 {recordMode === 'fixed' && (
-                  <input className={PREFIX + 'input'} type="text" aria-label="固定记忆库名称" value={draft.bankId ?? ''}
+                  <input className={PREFIX + 'input'} type="text" aria-label={t("固定记忆库名称")} value={draft.bankId ?? ''}
                     placeholder="my-memory-bank"
                     onChange={(event) => set('bankId', event.target.value)} />
                 )}
@@ -1461,42 +1469,42 @@ function PanelPage() {
           </div>
 
           <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>连接</h3>
+            <h3 className={PREFIX + 'cardtitle'}>{t("连接")}</h3>
 
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>服务地址</span>
+              <span className={PREFIX + 'label'}>{t("服务地址")}</span>
               <div className={PREFIX + 'control'}>
-                <input className={PREFIX + 'input'} type="text" aria-label="Hindsight API 服务地址" value={draft.apiUrl ?? ''}
+                <input className={PREFIX + 'input'} type="text" aria-label={t("Hindsight API 服务地址")} value={draft.apiUrl ?? ''}
                   placeholder="http://localhost:8888"
                   onChange={(event) => set('apiUrl', event.target.value)} />
                 <span className={PREFIX + 'hint'}>
-                  Hindsight API 的地址。启动/重启服务时按此端口监听（写入 apiUrl）。
+                  {t("Hindsight API 的地址。启动/重启服务时按此端口监听（写入 apiUrl）。")}
                 </span>
               </div>
             </div>
 
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>控制台地址</span>
+              <span className={PREFIX + 'label'}>{t("控制台地址")}</span>
               <div className={PREFIX + 'control'}>
-                <input className={PREFIX + 'input'} type="text" aria-label="Control Plane 控制台地址" value={cpDraft ?? ''}
+                <input className={PREFIX + 'input'} type="text" aria-label={t("Control Plane 控制台地址")} value={cpDraft ?? ''}
                   placeholder="http://127.0.0.1:9999"
                   onChange={(event) => setCp(event.target.value)} />
                 <span className={PREFIX + 'hint'}>
-                  Hindsight Control Plane 的地址（Web 控制台）。仅接受 http/https，不含路径参数。
-                  {data?.gui?.source === 'env' && ' 当前取自环境变量 HINDSIGHT_CP_URL，保存后改由本页管理。'}
-                  {data?.gui?.source === 'default' && ' 当前为默认值，保存后改由本页管理。'}
+                  {t("Hindsight Control Plane 的地址（Web 控制台）。仅接受 http/https，不含路径参数。")}
+                  {data?.gui?.source === 'env' && t(' 当前取自环境变量 HINDSIGHT_CP_URL，保存后改由本页管理。')}
+                  {data?.gui?.source === 'default' && t(' 当前为默认值，保存后改由本页管理。')}
                 </span>
               </div>
             </div>
 
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>日志级别</span>
+              <span className={PREFIX + 'label'}>{t("日志级别")}</span>
               <div className={PREFIX + 'control'}>
-                <select className={PREFIX + 'select'} aria-label="日志级别" value={draft.logLevel ?? 'info'}
+                <select className={PREFIX + 'select'} aria-label={t("日志级别")} value={draft.logLevel ?? 'info'}
                   onChange={(event) => set('logLevel', event.target.value)}>
                   {LOG_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
                 </select>
-                <span className={PREFIX + 'hint'}>写入 ~/.hindsight/coding-agents-logs/plugin.log 的详细程度。</span>
+                <span className={PREFIX + 'hint'}>{t("写入 ~/.hindsight/coding-agents-logs/plugin.log 的详细程度。")}</span>
               </div>
             </div>
           </div>
@@ -1509,10 +1517,10 @@ function PanelPage() {
         <>
           <div className={PREFIX + 'card'}>
             <details className={PREFIX + 'fold'} open={chatExpanded}>
-              <summary onClick={(event) => { event.preventDefault(); setChatExpanded((value) => !value) }}>功能模型调用</summary>
+              <summary onClick={(event) => { event.preventDefault(); setChatExpanded((value) => !value) }}>{t("功能模型调用")}</summary>
             <div className={PREFIX + 'foldbody'}>
             <div className={PREFIX + 'cardhead'}>
-              <span className={PREFIX + 'hint'}>DSH 聊天模型路由</span>
+              <span className={PREFIX + 'hint'}>{t("DSH 聊天模型路由")}</span>
               <button
                 type="button"
                 className={PREFIX + 'btn'}
@@ -1520,39 +1528,39 @@ function PanelPage() {
                 onClick={loadModels}
                 disabled={modelsState.loading}
               >
-                {modelsState.loading ? '获取模型中…' : '刷新 DSH 模型'}
+                {modelsState.loading ? t('获取模型中…') : t('刷新 DSH 模型')}
               </button>
             </div>
             <span className={PREFIX + 'hint'} style={{ marginTop: '-4px' }}>
-              从当前 DSH 环境已注册的 Provider 发现模型，支持下拉点选或手动指定；保存后重启服务生效。
+              {t("从当前 DSH 环境已注册的 Provider 发现模型，支持下拉点选或手动指定；保存后重启服务生效。")}
             </span>
 
             {(modelsState.state === 'error' || modelsState.state === 'unavailable') && !modelsState.loading && (
               <div className={PREFIX + 'errbanner'}>
                 <span>
-                  无法获取 DSH 模型列表：{modelsState.error ?? (modelsState.errors.map((entry) => entry.error).join('；') || '服务不可用')}
-                  {modelsState.sampledAt ? `（采样于 ${modelsState.sampledAt}）` : ''}
+                  {t("无法获取 DSH 模型列表：")}{modelsState.error ?? (modelsState.errors.map((entry) => entry.error).join('；') || t('服务不可用'))}
+                  {modelsState.sampledAt ? tf("（采样于 {0}）", [modelsState.sampledAt]) : ''}
                 </span>
               </div>
             )}
             {modelsState.state === 'partial' && modelsState.errors.length > 0 && (
               <div className={PREFIX + 'banner'}>
-                <span>部分 Provider 模型获取失败：{modelsState.errors.map((e) => `${e.provider ?? '未知 Provider'}：${e.error}`).join('；')}{modelsState.sampledAt ? `（采样于 ${modelsState.sampledAt}）` : ''}</span>
+                <span>{t("部分 Provider 模型获取失败：")}{modelsState.errors.map((e) => `${e.provider ?? t('未知 Provider')}：${e.error}`).join('；')}{modelsState.sampledAt ? tf("（采样于 {0}）", [modelsState.sampledAt]) : ''}</span>
               </div>
             )}
 
-            <Row label="代码库勘察（外部 CLI）">
-              <input className={PREFIX + 'input'} type="text" aria-label="勘察 CLI 模型标识" placeholder="留空继承默认 haiku"
+            <Row label={t("代码库勘察（外部 CLI）")}>
+              <input className={PREFIX + 'input'} type="text" aria-label={t("勘察 CLI 模型标识")} placeholder={t("留空继承默认 haiku")}
                 value={draft.surveyModel ?? ''} onChange={(event) => set('surveyModel', event.target.value)} />
-              <span className={PREFIX + 'hint'}>surveyModel 是外部 runner 的模型标识，不是 DSH Provider/Model 目录。官方适配器探测 Claude、Codex、Antigravity、OpenCode 等 CLI；模型参数支持取决于所选 runner。勘察需要已安装且已认证的 CLI，可能产生费用；本页不安装、探测或执行它们。已有工作区保存后可能需重启DSH。</span>
+              <span className={PREFIX + 'hint'}>{t("surveyModel 是外部 runner 的模型标识，不是 DSH Provider/Model 目录。官方适配器探测 Claude、Codex、Antigravity、OpenCode 等 CLI；模型参数支持取决于所选 runner。勘察需要已安装且已认证的 CLI，可能产生费用；本页不安装、探测或执行它们。已有工作区保存后可能需重启DSH。")}</span>
             </Row>
 
             {SERVER_SCOPES.map((scope) => (
               <ModelSelectField
                 key={scope.key}
-                label={scope.label}
-                hint={scope.hint + `（写入 serverModels.${scope.key}）`}
-                defaultValue="继承启动环境/后端默认，型号未确认"
+                label={t(scope.label)}
+                hint={t(scope.hint) + tf("（写入 serverModels.{0}）", [scope.key])}
+                defaultValue={t("继承启动环境/后端默认，型号未确认")}
                 value={serverModelsDraft[scope.key] ?? ''}
                 onChange={(val) => setServerModel(scope.key, val)}
                 providers={modelsState.providers}
@@ -1563,102 +1571,102 @@ function PanelPage() {
           </div>
 
           <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>向量模型</h3>
-            <span className={PREFIX + 'hint'}>此处是 Hindsight 向量化专用模型，不属于 DSH 聊天模型列表。预览反映已保存设置而非当前草稿；所有保存仅影响下次启动。本页不会迁移索引、下载模型或重启服务。</span>
-            <div className={PREFIX + 'banner'}>更换向量模型或维度可能需要重建/迁移已有向量，操作前请自行核对存量数据。</div>
+            <h3 className={PREFIX + 'cardtitle'}>{t("向量模型")}</h3>
+            <span className={PREFIX + 'hint'}>{t("此处是 Hindsight 向量化专用模型，不属于 DSH 聊天模型列表。预览反映已保存设置而非当前草稿；所有保存仅影响下次启动。本页不会迁移索引、下载模型或重启服务。")}</span>
+            <div className={PREFIX + 'banner'}>{t("更换向量模型或维度可能需要重建/迁移已有向量，操作前请自行核对存量数据。")}</div>
             <div className={PREFIX + 'preview'}>
             {embeddingPreview ? <>
-              <Row label="已保存预览">
+              <Row label={t("已保存预览")}>
                 <span className={embeddingPreview.mode === 'error' ? PREFIX + 'err' : PREFIX + 'mono'}>
-                  {embeddingPreview.mode === 'error' ? '配置错误' : embeddingPreview.provider ?? '未知 Provider'}
+                  {embeddingPreview.mode === 'error' ? t('配置错误') : embeddingPreview.provider ?? t('未知 Provider')}
                   {embeddingPreview.model ? ` · ${embeddingPreview.model}` : ''}
                   {embeddingPreview.baseUrl ? ` · ${embeddingPreview.baseUrl}` : ''}
-                  {embeddingPreview.dimensions != null ? ` · ${embeddingPreview.dimensions} 维` : ''}
+                  {embeddingPreview.dimensions != null ? tf(" · {0} 维", [embeddingPreview.dimensions]) : ''}
                 </span>
               </Row>
-              <Row label="配置来源">{embeddingPreview.source ?? '未知'} · {embeddingPreview.mode ?? '未知'} · 凭据来源 {embeddingPreview.credentialSource ?? '未知'} · {embeddingPreview.secretConfigured ? '下次启动凭据已配置（未验证有效性）' : '下次启动凭据未确认配置'}</Row>
+              <Row label={t("配置来源")}>{embeddingPreview.source ?? t('未知')} · {embeddingPreview.mode ?? t('未知')} {t("· 凭据来源")} {embeddingPreview.credentialSource ?? t('未知')} · {embeddingPreview.secretConfigured ? t('下次启动凭据已配置（未验证有效性）') : t('下次启动凭据未确认配置')}</Row>
               {embeddingPreview.note && <span className={PREFIX + 'hint'}>{embeddingPreview.note}</span>}
               {Array.isArray(embeddingPreview.warnings) && embeddingPreview.warnings
                 .filter((warning) => !isMigrationWarning(warning))
                 .map((warning, i) => <div key={i} className={PREFIX + 'banner'}>{warning}</div>)}
-            </> : <div className={PREFIX + 'banner'}>下次启动向量配置未知，无法确认已保存设置的解析结果。</div>}
-            <Row label="当前运行">{runningEmbedding
-              ? `${runningEmbedding.provider ?? '未知'}${runningEmbedding.model ? ` · ${runningEmbedding.model}` : ''}（本插件确认的启动快照）`
-              : '未知（无本插件确认的启动快照；不能推断正在使用下次启动配置）'}</Row>
+            </> : <div className={PREFIX + 'banner'}>{t("下次启动向量配置未知，无法确认已保存设置的解析结果。")}</div>}
+            <Row label={t("当前运行")}>{runningEmbedding
+              ? tf("{0}{1}（本插件确认的启动快照）", [runningEmbedding.provider ?? '未知', runningEmbedding.model ? ` · ${runningEmbedding.model}` : ''])
+              : t('未知（无本插件确认的启动快照；不能推断正在使用下次启动配置）')}</Row>
             </div>
             <div className={PREFIX + 'field'}>
               <span className={PREFIX + 'label'}>Provider</span>
-              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'} aria-label="向量 Provider" value={embeddingsDraft.provider}
+              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'} aria-label={t("向量 Provider")} value={embeddingsDraft.provider}
                 onChange={(event) => setEmbeddings('provider', event.target.value)}>
-                <option value="">继承环境 / 既有服务配置</option>
-                <option value="local">local（本地）</option>
-                <option value="openai">openai（含 LM Studio / OpenAI 兼容）</option>
+                <option value="">{t("继承环境 / 既有服务配置")}</option>
+                <option value="local">{t("local（本地）")}</option>
+                <option value="openai">{t("openai（含 LM Studio / OpenAI 兼容）")}</option>
                 <option value="onnx">onnx</option>
-                <option value="tei">tei（远端推理服务）</option>
+                <option value="tei">{t("tei（远端推理服务）")}</option>
                 {!['', 'local', 'openai', 'onnx', 'tei'].includes(embeddingsDraft.provider) &&
-                  <option value={embeddingsDraft.provider}>未知 Provider：{embeddingsDraft.provider}</option>}
-              </select><span className={PREFIX + 'hint'}>留空保持继承；不会自动迁移旧 serverEnv，既有值仅在下次启动预览中显示。</span></div>
+                  <option value={embeddingsDraft.provider}>{t("未知 Provider：")}{embeddingsDraft.provider}</option>}
+              </select><span className={PREFIX + 'hint'}>{t("留空保持继承；不会自动迁移旧 serverEnv，既有值仅在下次启动预览中显示。")}</span></div>
             </div>
             {['local', 'openai', 'onnx'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>{embeddingsDraft.provider === 'onnx' ? 'ONNX 模型 ID' : '模型'}</span>
-              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label="向量模型" value={embeddingsDraft.model}
-                placeholder={embeddingsDraft.provider === 'onnx' ? 'ONNX 模型 ID' : '向量模型名称'}
+              <span className={PREFIX + 'label'}>{embeddingsDraft.provider === 'onnx' ? t('ONNX 模型 ID') : t('向量模型')}</span>
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label={t("向量模型")} value={embeddingsDraft.model}
+                placeholder={embeddingsDraft.provider === 'onnx' ? t('ONNX 模型 ID') : t('向量模型名称')}
                 onChange={(event) => setEmbeddings('model', event.target.value)} />
-                {embeddingsDraft.provider !== 'openai' && <span className={PREFIX + 'hint'}>本地依赖及模型需自行准备；不会自动安装或信任远端代码。</span>}
+                {embeddingsDraft.provider !== 'openai' && <span className={PREFIX + 'hint'}>{t("本地依赖及模型需自行准备；不会自动安装或信任远端代码。")}</span>}
               </div>
             </div>}
             {['openai', 'tei'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
               <span className={PREFIX + 'label'}>Base URL</span>
-              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label="向量 Base URL" value={embeddingsDraft.baseUrl}
-                placeholder={embeddingsDraft.provider === 'tei' ? 'TEI 服务地址' : '兼容 OpenAI 的 API 地址'}
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label={t("向量 Base URL")} value={embeddingsDraft.baseUrl}
+                placeholder={embeddingsDraft.provider === 'tei' ? t('TEI 服务地址') : t('兼容 OpenAI 的 API 地址')}
                 onChange={(event) => setEmbeddings('baseUrl', event.target.value)} />
-                {embeddingsDraft.provider === 'tei' && <span className={PREFIX + 'hint'}>TEI 模型由远端服务决定，本页不发送模型字段。</span>}
+                {embeddingsDraft.provider === 'tei' && <span className={PREFIX + 'hint'}>{t("TEI 模型由远端服务决定，本页不发送模型字段。")}</span>}
               </div>
             </div>}
             {['openai', 'onnx'].includes(embeddingsDraft.provider) && <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>维度（可选）</span>
-              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="number" aria-label="向量维度" min="1" step="1"
+              <span className={PREFIX + 'label'}>{t("维度（可选）")}</span>
+              <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="number" aria-label={t("向量维度")} min="1" step="1"
                 value={embeddingsDraft.dimensions ?? ''} onChange={(event) => setEmbeddings('dimensions', event.target.value)} />
-                <span className={PREFIX + 'hint'}>留空继承既有维度配置，否则由模型/服务决定；设置后需核对现有向量索引。</span>
+                <span className={PREFIX + 'hint'}>{t("留空继承既有维度配置，否则由模型/服务决定；设置后需核对现有向量索引。")}</span>
               </div>
             </div>}
             {embeddingsDraft.provider === 'local' && <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>强制 CPU</span>
-              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'} aria-label="向量模型强制 CPU"
+              <span className={PREFIX + 'label'}>{t("强制 CPU")}</span>
+              <div className={PREFIX + 'control'}><select className={PREFIX + 'select'} aria-label={t("向量模型强制 CPU")}
                 value={embeddingsDraft.localForceCpu === null ? '' : String(embeddingsDraft.localForceCpu)}
                 onChange={(event) => setEmbeddings('localForceCpu', event.target.value === '' ? null : event.target.value === 'true')}>
-                <option value="">默认（不指定）</option><option value="true">是</option><option value="false">否</option>
+                <option value="">{t("默认（不指定）")}</option><option value="true">{t("是")}</option><option value="false">{t("否")}</option>
               </select></div>
             </div>}
             {embeddingsDraft.provider === 'openai' && <>
-              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>Key 环境变量</span>
-                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label="向量 Key 环境变量" value={embeddingsDraft.apiKeyEnv}
-                  placeholder="API Key 环境变量名" onChange={(event) => setEmbeddings('apiKeyEnv', event.target.value)} /></div>
+              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>{t("Key 环境变量")}</span>
+                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="text" aria-label={t("向量 Key 环境变量")} value={embeddingsDraft.apiKeyEnv}
+                  placeholder={t("API Key 环境变量名")} onChange={(event) => setEmbeddings('apiKeyEnv', event.target.value)} /></div>
               </div>
-              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>替换密钥</span>
-                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="password" aria-label="向量替换密钥" autoComplete="new-password" value={embeddingsDraft.apiKey}
-                  placeholder="向量 Key（留空保留已存值）" onChange={(event) => setEmbeddings('apiKey', event.target.value)} />
-                  <span className={PREFIX + 'hint'}>此 Hindsight 版本需要非空 Key；本地免鉴权端点也需由您明确填写非敏感占位值，或继承已有 Key。本页不会自动生成。</span>
+              <div className={PREFIX + 'field'}><span className={PREFIX + 'label'}>{t("替换密钥")}</span>
+                <div className={PREFIX + 'control'}><input className={PREFIX + 'input'} type="password" aria-label={t("向量替换密钥")} autoComplete="new-password" value={embeddingsDraft.apiKey}
+                  placeholder={t("向量 Key（留空保留已存值）")} onChange={(event) => setEmbeddings('apiKey', event.target.value)} />
+                  <span className={PREFIX + 'hint'}>{t("此 Hindsight 版本需要非空 Key；本地免鉴权端点也需由您明确填写非敏感占位值，或继承已有 Key。本页不会自动生成。")}</span>
                   {embeddingsDraft.secretConfigured && (embeddingsDraft.clearApiKey
-                    ? <span className={PREFIX + 'hint'}>将清除本页已保存 Key；环境凭据仍可能被继承。</span>
-                    : <div className={PREFIX + 'actions'}><span className={PREFIX + 'hint'}>已配置本页 Key（不显示内容）</span>
-                        <button type="button" className={PREFIX + 'btn'} onClick={() => setEmbeddings('clearApiKey', true)}>清除向量 Key</button>
+                    ? <span className={PREFIX + 'hint'}>{t("将清除本页已保存 Key；环境凭据仍可能被继承。")}</span>
+                    : <div className={PREFIX + 'actions'}><span className={PREFIX + 'hint'}>{t("已配置本页 Key（不显示内容）")}</span>
+                        <button type="button" className={PREFIX + 'btn'} onClick={() => setEmbeddings('clearApiKey', true)}>{t("清除向量 Key")}</button>
                       </div>)}
                 </div>
               </div>
             </>}
             {embeddingsDraft.provider && !['local', 'openai', 'onnx', 'tei'].includes(embeddingsDraft.provider) &&
-              <div className={PREFIX + 'errbanner'}><span>未知向量 Provider：不能推断其配置或生效状态，请切换到受支持的类型。</span></div>}
+              <div className={PREFIX + 'errbanner'}><span>{t("未知向量 Provider：不能推断其配置或生效状态，请切换到受支持的类型。")}</span></div>}
           </div>
 
           <div className={PREFIX + 'card'}>
             <details className={PREFIX + 'fold'} open={overridesExpanded}>
-              <summary onClick={(event) => { event.preventDefault(); setOverridesExpanded((value) => !value) }}>Provider 覆盖</summary>
+              <summary onClick={(event) => { event.preventDefault(); setOverridesExpanded((value) => !value) }}>{t("Provider 覆盖")}</summary>
             <div className={PREFIX + 'foldbody'}>
             <span className={PREFIX + 'hint'}>
-              为非内置 Provider 填写 openai 兼容端点与凭据；留空表示用环境变量（&lt;PROVIDER&gt;_API_KEY）或 DSH 凭据库。
+              {t("为非内置 Provider 填写 openai 兼容端点与凭据；留空表示用环境变量（<PROVIDER>_API_KEY）或 DSH 凭据库。")}
             </span>
-            {overrideProviders.length === 0 && <div className={PREFIX + 'muted'}>暂无需要覆盖的 Provider。</div>}
+            {overrideProviders.length === 0 && <div className={PREFIX + 'muted'}>{t("暂无需要覆盖的 Provider。")}</div>}
             {overrideProviders.map((provider) => {
               const entry = overridesDraft[provider] ?? { baseUrl: '', apiKeyEnv: '', apiKey: '', clearApiKey: false }
               const secretConfigured = data?.gui?.providerOverrides?.[provider]?.secretConfigured === true
@@ -1667,26 +1675,26 @@ function PanelPage() {
                   <span className={PREFIX + 'label ' + PREFIX + 'mono'}>{provider}</span>
                   <div className={PREFIX + 'control'}>
                     <input className={PREFIX + 'input'} type="text" aria-label={`${provider} Base URL`} value={entry.baseUrl ?? ''}
-                      placeholder="Base URL（openai 兼容端点，例如 https://api.example.com/v1）"
+                      placeholder={t("Base URL（openai 兼容端点，例如 https://api.example.com/v1）")}
                       onChange={(event) => setOverride(provider, 'baseUrl', event.target.value)} />
                     <div className={PREFIX + 'pair'}>
-                      <input className={PREFIX + 'input'} type="text" aria-label={`${provider} Key 环境变量`} value={entry.apiKeyEnv ?? ''}
-                        placeholder="API Key 环境变量名"
+                      <input className={PREFIX + 'input'} type="text" aria-label={tf("{0} Key 环境变量", [provider])} value={entry.apiKeyEnv ?? ''}
+                        placeholder={t("API Key 环境变量名")}
                         onChange={(event) => setOverride(provider, 'apiKeyEnv', event.target.value)} />
-                      <input className={PREFIX + 'input'} type="password" aria-label={`${provider} 替换密钥`} autoComplete="new-password" value={entry.apiKey ?? ''}
-                        placeholder={secretConfigured && entry.clearApiKey !== true ? '已保存 Key（输入以替换）' : '或直接填 Key'}
+                      <input className={PREFIX + 'input'} type="password" aria-label={tf("{0} 替换密钥", [provider])} autoComplete="new-password" value={entry.apiKey ?? ''}
+                        placeholder={secretConfigured && entry.clearApiKey !== true ? t('已保存 Key（输入以替换）') : t('或直接填 Key')}
                         onChange={(event) => setOverride(provider, 'apiKey', event.target.value)} />
                     </div>
                     {secretConfigured && (
                       entry.clearApiKey === true
-                        ? <span className={PREFIX + 'muted'}>将清除已保存的 Key（保存后生效）。</span>
+                        ? <span className={PREFIX + 'muted'}>{t("将清除已保存的 Key（保存后生效）。")}</span>
                         : (
                           <div className={PREFIX + 'actions'}>
-                            <span className={PREFIX + 'pill ' + PREFIX + 'ok'}><span className={PREFIX + 'dot'} />已配置 Key</span>
+                            <span className={PREFIX + 'pill ' + PREFIX + 'ok'}><span className={PREFIX + 'dot'} />{t("已配置 Key")}</span>
                             <button type="button" className={PREFIX + 'btn'}
                               style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
                               onClick={() => setOverride(provider, 'clearApiKey', true)}>
-                              清除已存 Key
+                              {t("清除已存 Key")}
                             </button>
                           </div>
                         )
@@ -1706,16 +1714,16 @@ function PanelPage() {
       {draft !== null && (
         <>
           <div className={PREFIX + 'card'}>
-            <h3 className={PREFIX + 'cardtitle'}>安全</h3>
+            <h3 className={PREFIX + 'cardtitle'}>{t("安全")}</h3>
             <div className={PREFIX + 'field'}>
-              <span className={PREFIX + 'label'}>审计日志</span>
+              <span className={PREFIX + 'label'}>{t("审计日志")}</span>
               <div className={PREFIX + 'control'}>
-                <select className={PREFIX + 'select'} aria-label="审计日志" value={auditDraft === null ? '' : String(auditDraft)}
+                <select className={PREFIX + 'select'} aria-label={t("审计日志")} value={auditDraft === null ? '' : String(auditDraft)}
                   onChange={(event) => { setAuditDraft(event.target.value === '' ? null : event.target.value === 'true'); setNotice(null); setSaveError(null) }}>
-                  <option value="">继承启动环境</option><option value="true">开启审计日志</option><option value="false">关闭审计日志</option>
+                  <option value="">{t("继承启动环境")}</option><option value="true">{t("开启审计日志")}</option><option value="false">{t("关闭审计日志")}</option>
                 </select>
                 <span className={PREFIX + 'hint'}>
-                  服务端部署级开关，重启服务后生效；也可按 bank 在 Control Plane 中单独覆盖。
+                  {t("服务端部署级开关，重启服务后生效；也可按 bank 在 Control Plane 中单独覆盖。")}
                 </span>
               </div>
             </div>
@@ -1727,56 +1735,56 @@ function PanelPage() {
 
       {data && (
         <div className={PREFIX + 'card'}>
-          <div className={PREFIX + 'cardhead'}><h3 className={PREFIX + 'cardtitle'}>记忆库 <span className={PREFIX + 'muted'}>({banks.length})</span></h3><span className={PREFIX + 'badge'}>开关即时写入</span></div>
-          <input className={PREFIX + 'input'} type="search" aria-label="搜索记忆库" placeholder="按名称或 ID 搜索记忆库" value={bankSearch} onChange={(event) => setBankSearch(event.target.value)} />
+          <div className={PREFIX + 'cardhead'}><h3 className={PREFIX + 'cardtitle'}>{t("记忆库")} <span className={PREFIX + 'muted'}>({banks.length})</span></h3><span className={PREFIX + 'badge'}>{t("开关即时写入")}</span></div>
+          <input className={PREFIX + 'input'} type="search" aria-label={t("搜索记忆库")} placeholder={t("按名称或 ID 搜索记忆库")} value={bankSearch} onChange={(event) => setBankSearch(event.target.value)} />
           {data.banksError ? (
-            <div className={PREFIX + 'errbanner'} role="alert"><span>无法读取记忆库列表：{data.banksError}</span></div>
-          ) : banks.length === 0 ? <div className={PREFIX + 'muted'}>没有读到记忆库。</div>
-            : visibleBanks.length === 0 ? <div className={PREFIX + 'muted'}>没有匹配的记忆库。</div> : (
+            <div className={PREFIX + 'errbanner'} role="alert"><span>{t("无法读取记忆库列表：")}{data.banksError}</span></div>
+          ) : banks.length === 0 ? <div className={PREFIX + 'muted'}>{t("没有读到记忆库。")}</div>
+            : visibleBanks.length === 0 ? <div className={PREFIX + 'muted'}>{t("没有匹配的记忆库。")}</div> : (
               <ul className={PREFIX + 'list'}>
                 {visibleBanks.map((bank) => {
                   const state = defense[bank.id] ?? { loading: true, enabled: false }
                   return (
                     <li className={PREFIX + 'item'} key={bank.id}>
                       <div className={PREFIX + 'bankmeta'}><span className={PREFIX + 'banktitle'}>{bank.name || bank.id}</span><span className={PREFIX + 'mono ' + PREFIX + 'muted'}>{bank.id}</span></div>
-                      <span className={PREFIX + 'count'}>{typeof bank.facts === 'number' ? `${bank.facts} 条事实` : '事实数未知'}</span>
-                      <span className={PREFIX + 'badge'}>{state.loading ? '处理中…' : state.unknown ? '策略未知' : state.enabled ? '脱敏已开启' : '标准脱敏未开启'}</span>
+                      <span className={PREFIX + 'count'}>{typeof bank.facts === 'number' ? tf("{0} 条事实", [bank.facts]) : t('事实数未知')}</span>
+                      <span className={PREFIX + 'badge'}>{state.loading ? t('处理中…') : state.unknown ? t('策略未知') : state.enabled ? t('脱敏已开启') : t('标准脱敏未开启')}</span>
                       <label className={PREFIX + 'check'} style={{ flex: '0 0 auto' }}>
-                        <input type="checkbox" aria-label={`${bank.name || bank.id} 脱敏`} disabled={state.loading === true || state.unknown === true || api?.up !== true || status.error !== null}
+                        <input type="checkbox" aria-label={tf("{0} 脱敏", [bank.name || bank.id])} disabled={state.loading === true || state.unknown === true || api?.up !== true || status.error !== null}
                           checked={state.enabled === true}
                           onChange={(event) => toggleDefense(bank.id, event.target.checked)} />
-                        <span className={PREFIX + 'muted'} style={{ fontSize: '12px' }}>脱敏</span>
+                        <span className={PREFIX + 'muted'} style={{ fontSize: '12px' }}>{t("脱敏")}</span>
                       </label>
                       {state.error && <div className={PREFIX + 'bankerror'}><span className={PREFIX + 'err'} role="alert">{state.error}</span>
-                        <button type="button" className={PREFIX + 'btn'} disabled={state.loading === true} onClick={() => readDefense(bank.id)}>重读策略</button>
+                        <button type="button" className={PREFIX + 'btn'} disabled={state.loading === true} onClick={() => readDefense(bank.id)}>{t("重读策略")}</button>
                       </div>}
                     </li>
                   )
                 })}
               </ul>
             )}
-          <span className={PREFIX + 'hint'}>「脱敏」管理 sensitive_data → redact 标准规则，保留其它更强或自定义策略。开关直接写入当前记忆库，不需要点击下方保存。</span>
+          <span className={PREFIX + 'hint'}>{t("「脱敏」管理 sensitive_data → redact 标准规则，保留其它更强或自定义策略。开关直接写入当前记忆库，不需要点击下方保存。")}</span>
         </div>
       )}
 
       </section>
       <section id="dsh-hsp-panel-advanced" role="tabpanel" aria-labelledby="dsh-hsp-tab-advanced" hidden={activeTab !== 'advanced'} className={PREFIX + 'tabpanel'}>
         {draft !== null && <details className={PREFIX + 'details'}>
-          <summary>其他插件选项</summary>
+          <summary>{t("其他插件选项")}</summary>
           <div className={PREFIX + 'control'} style={{ marginTop: '10px' }}>
             <label className={PREFIX + 'check'}>
               <input type="checkbox" checked={draft.autoUpdate === true} onChange={(event) => set('autoUpdate', event.target.checked)} />
-              <span>自动更新（autoUpdate）</span>
+              <span>{t("自动更新（autoUpdate）")}</span>
             </label>
             <label className={PREFIX + 'check'}>
               <input type="checkbox" checked={draft.codebaseSurvey === true} onChange={(event) => set('codebaseSurvey', event.target.checked)} />
-              <span>代码库勘察（codebaseSurvey）</span>
+              <span>{t("代码库勘察（codebaseSurvey）")}</span>
             </label>
           </div>
         </details>}
       {extraKeys.length > 0 && (
         <details className={PREFIX + 'details'}>
-          <summary>配置文件里还有 {extraKeys.length} 个本页不改写的键（保存时会原样保留）</summary>
+          <summary>{tf("配置文件里还有 {0} 个本页不改写的键（保存时会原样保留）", [extraKeys.length])}</summary>
           <div className={PREFIX + 'mono'} style={{ marginTop: '8px' }}>{extraKeys.join('、')}</div>
         </details>
       )}
@@ -1784,13 +1792,13 @@ function PanelPage() {
       {data?.management?.protocolVersion === 1 && api?.url && <ManagementPanel category={activeTab} apiUrl={api.url} banks={data.banks ?? []}
         request={managementRequest} upload={managementUpload} download={managementDownload} onChanged={load} />}
       {draft !== null && <div className={PREFIX + 'savebar'}>
-        <div className={PREFIX + 'savestate'} role="status">{saving ? '正在保存全部分类的更改…' : dirty ? '有未保存的更改（跨分类保留）' : '当前表单与已保存设置一致'}</div>
+        <div className={PREFIX + 'savestate'} role="status">{saving ? t('正在保存全部分类的更改…') : dirty ? t('有未保存的更改（跨分类保留）') : t('当前表单与已保存设置一致')}</div>
         <button type="button" className={PREFIX + 'btn ' + PREFIX + 'btnprimary'} disabled={!dirty || saving} onClick={save}>
-          {saving ? '保存中…' : '保存'}
+          {saving ? t('保存中…') : t('保存')}
         </button>
-        <button type="button" className={PREFIX + 'btn'} disabled={!dirty || saving} onClick={discard}>放弃更改</button>
+        <button type="button" className={PREFIX + 'btn'} disabled={!dirty || saving} onClick={discard}>{t("放弃更改")}</button>
         {notice && <span className={PREFIX + 'notice'} role="status" style={{ flexBasis: '100%' }}>{notice}</span>}
-        {saveError && <span className={PREFIX + 'err'} role="alert" style={{ flexBasis: '100%' }}>保存失败：{saveError}</span>}
+        {saveError && <span className={PREFIX + 'err'} role="alert" style={{ flexBasis: '100%' }}>{t("保存失败：")}{saveError}</span>}
       </div>}
     </div>
   )
