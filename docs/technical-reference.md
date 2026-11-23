@@ -198,12 +198,12 @@ The Hindsight API answers on `127.0.0.1:8888` **without an `Access-Control-Allow
 - **单文件原子保存** — 写临时文件后 rename；两个配置文件之间不是事务，失败时可能只保存一份，响应会明确报告部分保存，须刷新核对
 - **并发与损坏保护** — 保存需要两文件 revision 比对，文件损坏时拒绝覆盖；前端未保存编辑不会被轮询覆盖，错误状态可见
 - **保留备份** — 写入已有文件前复制为 `.bak`；备份及第三方原始日志不属于本页脱敏清理范围
-- **同源限制** — 必须是发往 DSH web server 自身端口的 loopback 同源请求；变更类请求还必须携带合法 `Origin`
+- **同源限制** — 必须是发往 DSH web server 自身端口的 loopback 请求；`Origin` 可选（桌面外壳的自定义协议转发不带它），存在时必须与请求目标完全一致，跨站写入仍被拒绝
 - **体积限制** — 请求体上限 32 KB，10 秒超时
 
 - **Key whitelist** — only the keys listed above are writable; the rest are rejected and reported back
 - **Per-file atomic save and revision checks** — temp file plus rename and a `.bak` copy for existing files; the two files are not transactional and a partial save is reported. Corrupt files are not overwritten; refresh after a conflict. Host errors and log summaries are redacted, not third-party raw logs or historical backups.
-- **Same-origin only** — loopback requests on the DSH server's own port; mutating requests must also carry a valid `Origin`
+- **Same-origin only** — loopback requests on the DSH server's own port; `Origin` is optional (the desktop shell's custom-protocol forwarding omits it) but must exactly match the request target when present, so cross-site writes are still rejected
 - **Size cap** — 32 KB request body, 10 s deadline
 
 ### 缺失配置时的行为
