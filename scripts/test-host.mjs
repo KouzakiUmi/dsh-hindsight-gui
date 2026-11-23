@@ -173,7 +173,7 @@ export async function fixture(options = {}) {
   ]
   for (const [before, after] of substitutions) { assert.ok(source.includes(before), 'mock boundary changed'); source = source.replace(before, after) }
   source = 'const process = globalThis.__hostFixture.process;\n'+source+
-    '\nexport { resolveServerEntry, redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, execCapture, ownsProcess, mergeMemoryDefense, fetchLlmModels };\n// fixture '+(++moduleId)
+    '\nexport { resolveServerEntry, redact, hash, stableJson, readJsonFile, atomicMerge, normalizeServerModels, normalizeProviderOverrides, normalizeServerEmbeddings, publicServerEmbeddings, normalizeServerEnv, sanitizePatch, apiTarget, buildServerEnv, createServerState, collect, runServerAction, startServer, restartServer, preflightServer, ownershipView, execCapture, ownsProcess, mergeMemoryDefense, fetchLlmModels, validLocalRequest, localRejectionReason };\n// fixture '+(++moduleId)
   const m = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
   const state = m.createServerState()
   const ctx = {
@@ -809,6 +809,36 @@ await test('CSRF/origin fence rejects foreign mutations before writes', async ()
   const res=await f.request('config',{disabled:true},{origin:'https://example.invalid'})
   assert.equal(res.code,403)
   assert.equal(f.writes.length,0)
+})
+await test('desktop shell forwarding without Origin can save settings (issue #6)', async () => {
+  const f=await fixture()
+  const initial=(await f.request('status')).body
+  const res=await f.request('config',{auditLogEnabled:true,guiRevision:initial.gui.revision},{origin:undefined})
+  assert.equal(res.code,200)
+  assert.equal(JSON.parse(f.files.get(f.guiPath)).auditLogEnabled,true)
+})
+await test('origin fence: Origin optional, exact match when present, other checks intact', async () => {
+  const {m}=await fixture()
+  const req=(headers,peer='127.0.0.1')=>({socket:{remoteAddress:peer},headers:{host:'127.0.0.1:59333',...headers}})
+  assert.equal(m.validLocalRequest(req({}),{port:59333}),true)
+  assert.equal(m.localRejectionReason(req({}),{port:59333}),null)
+  assert.equal(m.validLocalRequest(req({origin:'http://127.0.0.1:59333'}),{port:59333}),true)
+  assert.equal(m.validLocalRequest(req({origin:'https://example.invalid'}),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({origin:'null'}),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({origin:'dsh-app://app'}),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({'sec-fetch-site':'cross-site'}),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({},'192.0.2.10'),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({host:'127.0.0.1:59334'}),{port:59333}),false)
+  assert.equal(m.validLocalRequest(req({host:'example.invalid:59333'}),{port:59333}),false)
+})
+await test('bankdefense and manage write routes pass the fence without Origin', async () => {
+  const f=await fixture()
+  const bank=await f.request('bankdefense',{},{origin:undefined})
+  assert.notEqual(bank.code,403)
+  assert.equal(bank.code,400)
+  const manage=await f.request('manage',{},{origin:undefined})
+  assert.notEqual(manage.code,403)
+  assert.equal(manage.code,400)
 })
 await test('spoofed loopback headers cannot authorize a non-loopback peer', async () => {
   const f=await fixture()

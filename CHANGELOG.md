@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Accept write requests forwarded by the desktop shell's custom protocol (`dsh-app://app`), which carry no `Origin` header: the loopback fence no longer requires `Origin` on mutating requests, while any `Origin` that is present must still match the request target exactly and a cross-site `Sec-Fetch-Site` is still rejected. Fixes every settings save and service control returning 403 in the desktop app ([#6](https://github.com/KouzakiUmi/dsh-hindsight-gui/issues/6)).
 - Keep the selected bank id in `localStorage`, so a panel reload no longer clears the hand-typed memory bank (the host supplies no bank list today). Overview, security, models, and advanced share one key and stay in sync through a `storage` listener plus a same-window event; when storage is unavailable the panel falls back to in-memory state instead of failing. Thanks to @leaderlemon in PR #2.
 - Share effective Python entry resolution between launch fingerprints and status previews so automatic discovery does not leave an unchanged service permanently pending restart.
 - Require the control identity handshake for startup, late readiness, manager recovery and restart eligibility; distinguish a healthy API with unavailable control from a health timeout, retaining ownership evidence without confirming readiness.
